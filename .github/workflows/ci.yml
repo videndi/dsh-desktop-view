@@ -21,8 +21,6 @@ jobs:
         with:
           node-version: ${{ matrix.node }}
       - name: Syntax check
-        run: |
-          node --check index.js
-          node --check lib/scene.js
+        run: npm run check
       - name: Unit tests
-        run: node --test
+        run: npm test

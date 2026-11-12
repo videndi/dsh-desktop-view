@@ -143,6 +143,7 @@ function Get-WindowInfo($handle) {
     try { $procName = (Get-Process -Id $procId -ErrorAction Stop).ProcessName } catch { }
   }
   return [ordered]@{
+    hwnd        = ('0x{0:X8}' -f $handle.ToInt64())
     title       = [DvNative]::WindowTitle($handle)
     className   = [DvNative]::WindowClass($handle)
     processId   = $procId
