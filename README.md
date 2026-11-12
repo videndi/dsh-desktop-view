@@ -57,6 +57,8 @@
 plugin_manager install_bundle  target: github:Gaoler006115/dsh-desktop-view
 ```
 
+> 这条路要求机器上有 `git`（Windows 可用 `winget install Git.Git` 安装）。装完 git 后需要**重启 Harness**——已经在跑的进程不会重新读取 PATH，否则会报 `git ls-remote failed`。
+
 或者先 clone，再装本地目录（开发时这样改完即生效）：
 
 ```bash

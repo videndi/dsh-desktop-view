@@ -57,6 +57,10 @@ Install straight from GitHub through the Harness plugin manager (no clone needed
 plugin_manager install_bundle  target: github:Gaoler006115/dsh-desktop-view
 ```
 
+> This route needs `git` on the machine (`winget install Git.Git` on Windows).
+> After installing git, **restart Harness**: a running process does not re-read
+> PATH, and the install would fail with `git ls-remote failed`.
+
 Or clone and install the directory (handy while developing):
 
 ```bash
