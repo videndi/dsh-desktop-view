@@ -1,0 +1,54 @@
+{
+  "name": "dsh-desktop-view",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Desktop and pointer observation tools for the DeepSeek Harness agent: DPI-aware screen capture, pointer coordinates, monitor layout and window titles on Windows.",
+  "type": "module",
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js",
+    "./package.json": "./package.json",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg"
+  },
+  "files": [
+    "index.js",
+    "lib/*.js",
+    "scripts/capture.ps1",
+    "cordis.patch.yml",
+    "locale/*.json",
+    "icon.svg"
+  ],
+  "scripts": {
+    "check": "node --check index.js && node --check lib/scene.js",
+    "test": "node --test"
+  },
+  "keywords": [
+    "deepseek-harness",
+    "dsh",
+    "dsh-plugin",
+    "desktop",
+    "screenshot",
+    "cursor",
+    "windows",
+    "agent"
+  ],
+  "license": "MIT",
+  "author": "Gaoler006115",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Gaoler006115/dsh-desktop-view.git"
+  },
+  "homepage": "https://github.com/Gaoler006115/dsh-desktop-view#readme",
+  "bugs": {
+    "url": "https://github.com/Gaoler006115/dsh-desktop-view/issues"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  }
+}

@@ -1,0 +1,5 @@
+# dsh-desktop-view bundle layer: mount the Windows desktop observation tools.
+# Snapshot writes PNG copies under ~/.dsh/desktop-view/snapshots (newest 40 kept).
+- insert:
+    - id: desktop-view
+      name: dsh-desktop-view

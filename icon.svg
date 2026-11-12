@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" width="48" height="48" role="img" aria-label="Desktop view">
+  <defs>
+    <linearGradient id="dv-screen" x1="0" y1="0" x2="0.85" y2="1">
+      <stop offset="0" stop-color="#4f8ef7"/>
+      <stop offset="1" stop-color="#1d4ed8"/>
+    </linearGradient>
+  </defs>
+  <rect x="4" y="6.5" width="40" height="26" rx="4" fill="url(#dv-screen)"/>
+  <rect x="8.5" y="11" width="31" height="17" rx="2" fill="#0b1220" opacity="0.28"/>
+  <path d="M20 32.5h8l-1.2 6.5h-5.6z" fill="#2563eb"/>
+  <rect x="13.5" y="38.6" width="21" height="3.2" rx="1.6" fill="#93a7c4"/>
+  <path d="M26 17.5v13.2l3.9-3.8 2.9 5.9 3.2-1.6-2.9-5.9 5.4-0.1z"
+        fill="#ffffff" stroke="#0f172a" stroke-width="1.6" stroke-linejoin="round"/>
+</svg>

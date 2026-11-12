@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Desktop View",
+    "description": "Two read-only tools that show the agent the Windows desktop: a screen capture with monitor layout, pointer position and window titles, plus the pointer position alone."
+  }
+}
