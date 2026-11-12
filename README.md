@@ -87,14 +87,14 @@ sequenceDiagram
     participant M as 模型
     participant T as desktop_snapshot
     participant P as powershell.exe
-    participant D as Windows 桌面
-    M->>T: 调用工具（monitor / max_width / mark_cursor）
-    T->>P: capture.ps1 -Mode snapshot -OutPng ...
-    P->>D: SetProcessDPIAware / GetCursorPos / EnumDisplayMonitors
-    P->>D: CopyFromScreen（虚拟桌面并集或单屏）
+    participant D as 桌面
+    M->>T: 调用（monitor / max_width / mark_cursor）
+    T->>P: capture.ps1 -Mode snapshot
+    P->>D: GetCursorPos / 枚举显示器
+    P->>D: CopyFromScreen 截取区域
     P->>P: 缩放、画鼠标环、存 PNG
-    P-->>T: 一份 UTF-8 JSON（几何 + 图片元数据）
-    T-->>M: 文本信封 +（可选）image 内容块
+    P-->>T: UTF-8 JSON（几何 + 图片元数据）
+    T-->>M: 文本信封 + 可选 image 块
 ```
 
 要点：

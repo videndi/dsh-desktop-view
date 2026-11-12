@@ -87,14 +87,14 @@ sequenceDiagram
     participant M as Model
     participant T as desktop_snapshot
     participant P as powershell.exe
-    participant D as Windows desktop
-    M->>T: tool call (monitor / max_width / mark_cursor)
-    T->>P: capture.ps1 -Mode snapshot -OutPng ...
-    P->>D: SetProcessDPIAware / GetCursorPos / EnumDisplayMonitors
-    P->>D: CopyFromScreen (virtual-desktop union or one monitor)
-    P->>P: downscale, draw pointer ring, save PNG
-    P-->>T: one UTF-8 JSON document (geometry + image metadata)
-    T-->>M: text envelope + optional image content block
+    participant D as Desktop
+    M->>T: call (monitor / max_width / mark_cursor)
+    T->>P: capture.ps1 -Mode snapshot
+    P->>D: GetCursorPos / enumerate monitors
+    P->>D: CopyFromScreen the region
+    P->>P: downscale, draw ring, save PNG
+    P-->>T: UTF-8 JSON (geometry + image metadata)
+    T-->>M: text envelope + optional image block
 ```
 
 - `index.js` registers both tools as **raw JSON-Schema definitions** and validates its own arguments, because an out-of-tree bundle cannot resolve the harness packages by import.
