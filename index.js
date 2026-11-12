@@ -415,9 +415,9 @@ export function apply(ctx) {
       rawInput: args,
     }),
     async execute(args, exec) {
-      assertWindows('desktop observation')
       const monitor = optionalInteger(args?.monitor, 'monitor', undefined, 1, 64)
       const maxWidth = optionalInteger(args?.max_width, 'max_width', 0, 0, 16384)
+      assertWindows('desktop observation')
       mkdirSync(SNAPSHOT_DIR, { recursive: true })
       pruneSnapshots(SNAPSHOT_DIR)
       const pngPath = join(SNAPSHOT_DIR, `desktop-${timestampSlug()}.png`)
