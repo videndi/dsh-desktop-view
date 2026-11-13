@@ -55,6 +55,8 @@ An agent can read files and run commands, but it cannot see the thing you are lo
 
 ![Input demo](media/preview.gif)
 
+A vertical 9:16 cut (1080×1920, for TikTok / Reels / Shorts) sits in the same release: [download the vertical version](https://github.com/Gaoler006115/dsh-desktop-view/releases/download/v0.2.0/dsh-desktop-view-promo-vertical.mp4) (2.6 MB).
+
 ## Install
 
 Requires Windows 10/11, DeepSeek Harness 0.2.x, and Node ≥ 22 in the host.

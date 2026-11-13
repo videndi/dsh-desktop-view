@@ -55,6 +55,8 @@
 
 ![操作演示](media/preview.gif)
 
+竖版 9:16（1080×1920，适合抖音 / 小红书 / 视频号）也在同一个 Release 里：[下载竖版](https://github.com/Gaoler006115/dsh-desktop-view/releases/download/v0.2.0/dsh-desktop-view-promo-vertical.mp4)（2.6 MB）。
+
 ## 安装
 
 要求：Windows 10/11、DeepSeek Harness 0.2.x、宿主 Node ≥ 22。
