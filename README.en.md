@@ -4,7 +4,7 @@
 
 [中文](README.md)
 
-[![Desktop View: a 38-second demo — it sees the screen, and acts on it](media/poster.jpg)](https://github.com/Gaoler006115/dsh-desktop-view/releases/download/v0.2.0/dsh-desktop-view-promo.mp4)
+[![Desktop View: a 38-second demo — it sees the screen, and acts on it](media/poster.jpg)](https://github.com/videndi/dsh-desktop-view/releases/download/v0.2.0/dsh-desktop-view-promo.mp4)
 
 **Observation (read-only)**
 
@@ -55,7 +55,7 @@ An agent can read files and run commands, but it cannot see the thing you are lo
 
 ![Input demo](media/preview.gif)
 
-A vertical 9:16 cut (1080×1920, for TikTok / Reels / Shorts) sits in the same release: [download the vertical version](https://github.com/Gaoler006115/dsh-desktop-view/releases/download/v0.2.0/dsh-desktop-view-promo-vertical.mp4) (2.6 MB).
+A vertical 9:16 cut (1080×1920, for TikTok / Reels / Shorts) sits in the same release: [download the vertical version](https://github.com/videndi/dsh-desktop-view/releases/download/v0.2.0/dsh-desktop-view-promo-vertical.mp4) (2.6 MB).
 
 ## Install
 
@@ -64,7 +64,7 @@ Requires Windows 10/11, DeepSeek Harness 0.2.x, and Node ≥ 22 in the host.
 Install straight from GitHub through the Harness plugin manager (no clone needed):
 
 ```text
-plugin_manager install_bundle  target: github:Gaoler006115/dsh-desktop-view
+plugin_manager install_bundle  target: github:videndi/dsh-desktop-view
 ```
 
 > This route needs `git` on the machine (`winget install Git.Git` on Windows).
@@ -74,7 +74,7 @@ plugin_manager install_bundle  target: github:Gaoler006115/dsh-desktop-view
 Or clone and install the directory (handy while developing):
 
 ```bash
-git clone https://github.com/Gaoler006115/dsh-desktop-view.git
+git clone https://github.com/videndi/dsh-desktop-view.git
 ```
 
 ```text

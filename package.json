@@ -42,11 +42,11 @@
   "author": "Gaoler",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/Gaoler006115/dsh-desktop-view.git"
+    "url": "git+https://github.com/videndi/dsh-desktop-view.git"
   },
-  "homepage": "https://github.com/Gaoler006115/dsh-desktop-view#readme",
+  "homepage": "https://github.com/videndi/dsh-desktop-view#readme",
   "bugs": {
-    "url": "https://github.com/Gaoler006115/dsh-desktop-view/issues"
+    "url": "https://github.com/videndi/dsh-desktop-view/issues"
   },
   "engines": {
     "node": ">=22"

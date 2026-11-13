@@ -4,7 +4,7 @@
 
 [English](README.en.md)
 
-[![桌面视图：38 秒演示 — 看见屏幕，也替你动手](media/poster.jpg)](https://github.com/Gaoler006115/dsh-desktop-view/releases/download/v0.2.0/dsh-desktop-view-promo.mp4)
+[![桌面视图：38 秒演示 — 看见屏幕，也替你动手](media/poster.jpg)](https://github.com/videndi/dsh-desktop-view/releases/download/v0.2.0/dsh-desktop-view-promo.mp4)
 
 **观察（只读）**
 
@@ -55,7 +55,7 @@
 
 ![操作演示](media/preview.gif)
 
-竖版 9:16（1080×1920，适合抖音 / 小红书 / 视频号）也在同一个 Release 里：[下载竖版](https://github.com/Gaoler006115/dsh-desktop-view/releases/download/v0.2.0/dsh-desktop-view-promo-vertical.mp4)（2.6 MB）。
+竖版 9:16（1080×1920，适合抖音 / 小红书 / 视频号）也在同一个 Release 里：[下载竖版](https://github.com/videndi/dsh-desktop-view/releases/download/v0.2.0/dsh-desktop-view-promo-vertical.mp4)（2.6 MB）。
 
 ## 安装
 
@@ -64,7 +64,7 @@
 用 Harness 自带的插件管理器，直接从 GitHub 装（不需要先 clone）：
 
 ```text
-plugin_manager install_bundle  target: github:Gaoler006115/dsh-desktop-view
+plugin_manager install_bundle  target: github:videndi/dsh-desktop-view
 ```
 
 > 这条路要求机器上有 `git`（Windows 可用 `winget install Git.Git` 安装）。装完 git 后需要**重启 Harness**——已经在跑的进程不会重新读取 PATH，否则会报 `git ls-remote failed`。
@@ -72,7 +72,7 @@ plugin_manager install_bundle  target: github:Gaoler006115/dsh-desktop-view
 或者先 clone，再装本地目录（开发时这样改完即生效）：
 
 ```bash
-git clone https://github.com/Gaoler006115/dsh-desktop-view.git
+git clone https://github.com/videndi/dsh-desktop-view.git
 ```
 
 ```text
