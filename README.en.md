@@ -4,6 +4,8 @@
 
 [中文](README.md)
 
+[![Desktop View: a 38-second demo — it sees the screen, and acts on it](media/poster.jpg)](https://github.com/Gaoler006115/dsh-desktop-view/releases/download/v0.2.0/dsh-desktop-view-promo.mp4)
+
 **Observation (read-only)**
 
 | Tool | One line |
@@ -46,6 +48,12 @@ An agent can read files and run commands, but it cannot see the thing you are lo
 - **Readable failures**: out-of-range points, missing windows and unknown key names report clearly instead of doing nothing.
 - **Private by default**: local only, no network, no telemetry; PNGs in `~/.dsh/desktop-view/snapshots`, newest 40 kept.
 - **No native dependency**: plain Windows PowerShell 5.1 plus .NET — nothing to compile or install.
+
+## Video
+
+38 seconds, four beats: see the screen, act on it, manage windows, install with one command. Click the cover for the full MP4 (3 MB); the clip below is the input section:
+
+![Input demo](media/preview.gif)
 
 ## Install
 

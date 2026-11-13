@@ -4,6 +4,8 @@
 
 [English](README.en.md)
 
+[![桌面视图：38 秒演示 — 看见屏幕，也替你动手](media/poster.jpg)](https://github.com/Gaoler006115/dsh-desktop-view/releases/download/v0.2.0/dsh-desktop-view-promo.mp4)
+
 **观察（只读）**
 
 | 工具 | 一句话 |
@@ -46,6 +48,12 @@
 - **失败可读**：坐标越界、窗口不存在、按键名不认识都会明确报错，而不是静默无效。
 - **隐私默认值**：纯本地，不联网；截图只在 `~/.dsh/desktop-view/snapshots`，自动只留最近 40 张。
 - **零原生依赖**：纯 Windows PowerShell 5.1 + .NET，不用编译、不用装模块。
+
+## 视频
+
+38 秒讲四件事：看见屏幕、动手操作、管理窗口、一条命令安装。点封面看完整版（MP4，3 MB）；下面是其中的操作片段：
+
+![操作演示](media/preview.gif)
 
 ## 安装
 
