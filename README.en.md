@@ -27,6 +27,9 @@
 | `desktop_live` | Look right now through the always-on helper (~0.2 s); can wait until the picture actually changes |
 | `desktop_wait` | Wait for a window to appear, or for the screen to settle after an action |
 | `desktop_ui_tree` | Read the controls a window exposes (name, type, rectangle) so buttons are found, not guessed |
+- `desktop_find`: locate a control by name, automation id or type and report the actions it supports plus its current value
+- `desktop_click_element`: activate a control by identity (Invoke/Toggle/Select/Expand), falling back to a rectangle click only when it exposes no action
+- `desktop_set_text`: fill a field by identity — ValuePattern where it exists, focus-and-type where it does not
 
 Every input tool reports the pointer position and foreground window it left behind, so each step can be checked.
 
@@ -186,7 +189,7 @@ sequenceDiagram
     T-->>M: text envelope + image block when capturing
 ```
 
-- `index.js` registers twelve tools as **raw JSON-Schema definitions** and validates its own arguments, because an out-of-tree bundle cannot resolve the harness packages by import.
+- `index.js` registers fifteen tools as **raw JSON-Schema definitions** and validates its own arguments, because an out-of-tree bundle cannot resolve the harness packages by import.
 - Each call starts one short-lived `powershell.exe -NoProfile -NonInteractive`: `capture.ps1` for the screenshot and geometry, `control.ps1` for `SendInput` and window operations; `Add-Type` compiles a small P/Invoke helper per process.
 - The helper writes a JSON file that Node reads, so **localized console output is never parsed**.
 - Capture and input share one DPI-aware coordinate space, so a point seen in the image is the point that gets clicked.

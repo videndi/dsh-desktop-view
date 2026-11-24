@@ -15,7 +15,7 @@ import { homedir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { monitorIndexAt, renderScene } from './lib/scene.js'
-import { parseKeyCombo, renderActionResult, renderUiTree, renderWait, renderWindowList, renderWindowOp } from './lib/control.js'
+import { parseKeyCombo, renderActionResult, renderElementAction, renderFind, renderUiTree, renderWait, renderWindowList, renderWindowOp } from './lib/control.js'
 import { runPowerShellScript } from './lib/powershell.js'
 import { DesktopHelper } from './lib/helper.js'
 
@@ -189,8 +189,9 @@ const CURSOR_OUTPUT = {
 }
 
 const LIVE_OUTPUT = {
-  ...SNAPSHOT_OUTPUT,
-  required: [...SNAPSHOT_OUTPUT.required, 'changed'],
+  type: 'object',
+  additionalProperties: false,
+  required: ['capturedAt', 'region', 'virtualScreen', 'monitors', 'dpiScale', 'cursor', 'foregroundWindow', 'windowUnderCursor', 'changed'],
   properties: {
     ...SNAPSHOT_OUTPUT.properties,
     changed: { type: 'boolean' },
@@ -232,7 +233,7 @@ const WAIT_OUTPUT = {
 const UI_NODE_SCHEMA = {
   type: 'object',
   additionalProperties: false,
-  required: ['name', 'type', 'automationId', 'className', 'x', 'y', 'width', 'height', 'enabled', 'offscreen', 'depth'],
+  required: ['name', 'type', 'automationId', 'className', 'x', 'y', 'width', 'height', 'enabled', 'focusable', 'offscreen', 'depth', 'patterns'],
   properties: {
     name: { type: 'string' },
     type: { type: 'string' },
@@ -243,8 +244,59 @@ const UI_NODE_SCHEMA = {
     width: { type: 'integer' },
     height: { type: 'integer' },
     enabled: { type: 'boolean' },
+    focusable: { type: 'boolean' },
     offscreen: { type: 'boolean' },
     depth: { type: 'integer' },
+    patterns: { type: 'array', items: { type: 'string' } },
+    value: { type: 'string' },
+    toggle: { type: 'string' },
+  },
+}
+
+/** Compact element description for find/click-by-name results. */
+const ELEMENT_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['name', 'type', 'automationId', 'className', 'x', 'y', 'width', 'height', 'enabled', 'patterns'],
+  properties: {
+    name: { type: 'string' },
+    type: { type: 'string' },
+    automationId: { type: 'string' },
+    className: { type: 'string' },
+    x: { type: 'integer' },
+    y: { type: 'integer' },
+    width: { type: 'integer' },
+    height: { type: 'integer' },
+    enabled: { type: 'boolean' },
+    focusable: { type: 'boolean' },
+    offscreen: { type: 'boolean' },
+    patterns: { type: 'array', items: { type: 'string' } },
+    value: { type: 'string' },
+    toggle: { type: 'string' },
+  },
+}
+
+const FIND_OUTPUT = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['found'],
+  properties: {
+    found: { type: 'boolean' },
+    node: ELEMENT_SCHEMA,
+    candidates: { type: 'array', items: ELEMENT_SCHEMA },
+  },
+}
+
+const ELEMENT_ACTION_OUTPUT = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['how', 'node'],
+  properties: {
+    how: { type: 'string' },
+    node: ELEMENT_SCHEMA,
+    text: { type: 'string' },
+    pointer: POINT_SCHEMA,
+    foreground: WINDOW_SCHEMA,
   },
 }
 
@@ -375,6 +427,7 @@ let liveTimer = null
 let liveFrame = null
 let liveBusy = false
 let liveLastUse = 0
+let lastReturnedSignature = null
 const actionTimestamps = []
 
 function desktopHelper() {
@@ -606,6 +659,36 @@ async function runControl(request, signal, timeoutMs = CONTROL_TIMEOUT_MS) {
   }
 }
 
+const INTERACTIVE_TYPES = new Set([
+  'Button', 'Edit', 'ComboBox', 'CheckBox', 'RadioButton', 'MenuItem', 'ListItem',
+  'TabItem', 'Hyperlink', 'TreeItem', 'Slider', 'Spinner', 'MenuItem',
+])
+
+/** Controls worth showing by default: the ones an action could land on. */
+function isInteractiveNode(node) {
+  if (node.depth <= 1) return true
+  if (Array.isArray(node.patterns) && node.patterns.length > 0) return true
+  return INTERACTIVE_TYPES.has(node.type)
+}
+
+/** Shared addressing payload for the element tools. */
+function elementQuery(args) {
+  const payload = {
+    depth: optionalInteger(args?.depth, 'depth', 6, 1, 8),
+    max: optionalInteger(args?.max, 'max', 400, 1, 400),
+  }
+  if (args?.hwnd) payload.hwnd = String(args.hwnd)
+  else if (args?.title) payload.title = String(args.title)
+  if (args?.x !== undefined || args?.y !== undefined) {
+    payload.x = requireInteger(args?.x, 'x', -100_000, 100_000)
+    payload.y = requireInteger(args?.y, 'y', -100_000, 100_000)
+  }
+  if (args?.name) payload.name = String(args.name)
+  if (args?.automation_id) payload.automationId = String(args.automation_id)
+  if (args?.type) payload.type = String(args.type)
+  return payload
+}
+
 /** Whether the route that will receive this result accepts image content. */
 async function routeAcceptsImages(ctx, exec) {
   const llm = ctx.get('llm')
@@ -664,6 +747,16 @@ const TOOL_GUIDE = 'Coordinates are virtual-screen pixels from desktop_snapshot.
 export const inject = ['tools']
 
 export function apply(ctx) {
+  // A reload must not leave the previous helper (and its live timer) running.
+  if (typeof ctx.on === 'function') {
+    ctx.on('dispose', () => {
+      if (liveTimer) { clearInterval(liveTimer); liveTimer = null }
+      if (helperInstance) { helperInstance.dispose(); helperInstance = null }
+      liveFrame = null
+      lastReturnedSignature = null
+    })
+  }
+
   const register = (definition) => {
     try {
       ctx.tools.register(definition)
@@ -786,6 +879,8 @@ export function apply(ctx) {
       const x = requireInteger(args?.x, 'x', -100_000, 100_000)
       const y = requireInteger(args?.y, 'y', -100_000, 100_000)
       assertControlEnabled()
+      assertNotStopped()
+      throttle()
       const result = await runControl({ action: 'move', x, y }, exec.signal)
       return { action: 'move', to: { x, y }, pointer: result.pointer, foreground: result.foreground }
     },
@@ -838,6 +933,8 @@ export function apply(ctx) {
         request.y = requireInteger(args.y, 'y', -100_000, 100_000)
       }
       assertControlEnabled()
+      assertNotStopped()
+      throttle()
       const result = await runControl(request, exec.signal)
       return { action: 'click', button, count, at: result.pointer, pointer: result.pointer, foreground: result.foreground }
     },
@@ -884,6 +981,8 @@ export function apply(ctx) {
       const durationMs = optionalInteger(args?.duration_ms, 'duration_ms', 350, 0, 5000)
       const steps = Math.min(Math.max(Math.round(durationMs / 30), 4), 40)
       assertControlEnabled()
+      assertNotStopped()
+      throttle()
       const result = await runControl({
         action: 'drag', fromX, fromY, toX, toY, button, steps, durationMs,
       }, exec.signal)
@@ -936,6 +1035,8 @@ export function apply(ctx) {
         request.y = requireInteger(args.y, 'y', -100_000, 100_000)
       }
       assertControlEnabled()
+      assertNotStopped()
+      throttle()
       const result = await runControl(request, exec.signal)
       return { action: 'scroll', delta, horizontal, at: result.pointer, pointer: result.pointer, foreground: result.foreground }
     },
@@ -973,6 +1074,8 @@ export function apply(ctx) {
       const intervalMs = optionalInteger(args?.interval_ms, 'interval_ms', 8, 0, 1000)
       const timeoutMs = Math.min(CONTROL_TIMEOUT_MS + text.length * intervalMs, 170_000)
       assertControlEnabled()
+      assertNotStopped()
+      throttle()
       const result = await runControl({ action: 'type', text, intervalMs }, exec.signal, timeoutMs)
       return { action: 'type', chars: result.chars, pointer: result.pointer, foreground: result.foreground }
     },
@@ -998,6 +1101,8 @@ export function apply(ctx) {
     async execute(args, exec) {
       const parsed = parseKeyCombo(args?.keys)
       assertControlEnabled()
+      assertNotStopped()
+      throttle()
       const result = await runControl({
         action: 'key',
         modifierVks: parsed.modifierVks,
@@ -1056,6 +1161,8 @@ export function apply(ctx) {
       }
 
       assertControlEnabled()
+      assertNotStopped()
+      throttle()
 
       if (operation === 'list') {
         const result = await runControl({ action: 'windows', ...(title === undefined ? {} : { filter: title }), limit: 60 }, exec.signal)
@@ -1087,7 +1194,8 @@ export function apply(ctx) {
       type: 'object',
       additionalProperties: false,
       properties: {
-        max_width: { type: 'integer', description: 'Downscale to at most this width. Omit for 1280; 0 keeps native resolution.' },
+        max_width: { type: 'integer', description: 'Downscale to at most this width. Omit for 960; 0 keeps native resolution.' },
+        only_if_changed: { type: 'boolean', description: 'When the screen is identical to the last frame returned, answer with state only and no image. Defaults to true.' },
         mark_cursor: { type: 'boolean', description: 'Draw a ring at the pointer. Defaults to true.' },
         until: { type: 'string', enum: ['change'], description: 'Wait until the screen changes before returning. Needs wait_ms.' },
         wait_ms: { type: 'integer', description: 'Upper bound for the wait, 0 to 30000 ms. Defaults to 0.' },
@@ -1108,7 +1216,7 @@ export function apply(ctx) {
     async execute(args, exec) {
       assertWindows('desktop observation')
       mkdirSync(SNAPSHOT_DIR, { recursive: true })
-      const maxWidth = optionalInteger(args?.max_width, 'max_width', 1280, 0, 3840)
+      const maxWidth = optionalInteger(args?.max_width, 'max_width', 960, 0, 3840)
       const waitMs = optionalInteger(args?.wait_ms, 'wait_ms', 0, 0, 30_000)
       await ensureLive()
       const before = decodeFingerprint(liveFrame?.fingerprint)
@@ -1123,6 +1231,26 @@ export function apply(ctx) {
       } else if (waitMs > 0) {
         await delay(waitMs)
       }
+      // Unchanged screen: answer with state only, no pixels. That is the single
+      // biggest token saving in a loop, and the frame adds nothing when the
+      // picture is byte-identical to the one just returned.
+      if (args?.only_if_changed !== false && liveFrame && liveFrame.signature === lastReturnedSignature) {
+        const info = await desktopHelper().call('info')
+        const under = await desktopHelper().call('windowAt', { x: info.pointer.x, y: info.pointer.y })
+        const region = { x: info.virtualScreen.x, y: info.virtualScreen.y, width: info.virtualScreen.width, height: info.virtualScreen.height, kind: 'virtual-desktop' }
+        return {
+          capturedAt: localIso(),
+          region,
+          virtualScreen: info.virtualScreen,
+          monitors: info.monitors,
+          dpiScale: Math.round((info.dpi / 96) * 1000) / 1000,
+          cursor: { screenX: info.pointer.x, screenY: info.pointer.y, imageX: info.pointer.x, imageY: info.pointer.y, onImage: true },
+          foregroundWindow: info.foreground,
+          windowUnderCursor: under.window,
+          changed: false,
+          waited_ms: Date.now() - started,
+        }
+      }
       pruneSnapshots(SNAPSHOT_DIR)
       const pngPath = join(SNAPSHOT_DIR, `live-${timestampSlug()}.png`)
       const scene = await runCapture({ mode: 'snapshot', pngPath, maxWidth, markCursor: args?.mark_cursor !== false })
@@ -1132,6 +1260,7 @@ export function apply(ctx) {
         changed,
         waited_ms: Date.now() - started,
       }
+      lastReturnedSignature = liveFrame?.signature ?? null
       await attachCapture(ctx, exec, value)
       return value
     },
@@ -1190,7 +1319,7 @@ export function apply(ctx) {
 
   register({
     name: 'desktop_ui_tree',
-    description: 'List the controls Windows exposes for a window, or for the element at a point: name, control type, automation id and rectangle. Use it to find a button precisely before clicking instead of guessing coordinates from the picture, and to read what a dialog is actually asking.',
+    description: 'List the controls Windows exposes for a window or a point, with the actions each one supports. Interactive controls only by default; set interactive_only false to see the whole tree.',
     parameters: {
       type: 'object',
       additionalProperties: false,
@@ -1199,8 +1328,9 @@ export function apply(ctx) {
         hwnd: { type: 'string', description: 'Exact window handle from desktop_window, as a hex string.' },
         x: { type: 'integer', description: 'Screen x of a point; pair it with y to inspect only that element subtree.' },
         y: { type: 'integer', description: 'Screen y; pair it with x.' },
-        depth: { type: 'integer', description: 'How deep to walk, 1 to 8. Defaults to 4.' },
-        max: { type: 'integer', description: 'Maximum nodes to return, 1 to 400. Defaults to 120.' },
+        depth: { type: 'integer', description: 'How deep to walk, 1 to 8. Defaults to 3.' },
+        max: { type: 'integer', description: 'Maximum nodes to return, 1 to 400. Defaults to 60.' },
+        interactive_only: { type: 'boolean', description: 'Keep only controls that can be acted on. Defaults to true.' },
       },
     },
     output: { schema: UI_TREE_OUTPUT, render: (_args, value) => [{ type: 'text', text: renderUiTree(value) }] },
@@ -1214,8 +1344,8 @@ export function apply(ctx) {
         throw new Error('give both x and y, or neither')
       }
       const payload = {
-        depth: optionalInteger(args?.depth, 'depth', 4, 1, 8),
-        max: optionalInteger(args?.max, 'max', 120, 1, 400),
+        depth: optionalInteger(args?.depth, 'depth', 3, 1, 8),
+        max: optionalInteger(args?.max, 'max', 60, 1, 400),
       }
       if (args?.hwnd) payload.hwnd = String(args.hwnd)
       else if (args?.title) payload.title = String(args.title)
@@ -1225,7 +1355,115 @@ export function apply(ctx) {
       }
       const instance = await desktopHelper().start()
       const reply = await instance.call('uia', payload, { timeoutMs: 30_000 })
-      return { count: reply.count, nodes: reply.nodes }
+      const nodes = args?.interactive_only === false ? reply.nodes : reply.nodes.filter(isInteractiveNode)
+      return { count: nodes.length, nodes }
+    },
+  })
+
+  register({
+    name: 'desktop_find',
+    description: 'Find one control by name, automation id or type inside a window, so the next step can act on the control itself. On no match it returns a short list of the interactive controls that are there.',
+    parameters: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        title: { type: 'string', description: 'Window title substring. Ignored when hwnd or a point is given.' },
+        hwnd: { type: 'string', description: 'Exact window handle from desktop_window.' },
+        x: { type: 'integer', description: 'Screen x of a point; pair it with y to search only that element subtree.' },
+        y: { type: 'integer', description: 'Screen y; pair it with x.' },
+        name: { type: 'string', description: 'Visible label, matched case-insensitively as a substring.' },
+        automation_id: { type: 'string', description: 'Exact automation id, when the control exposes one.' },
+        type: { type: 'string', description: 'Control type such as Button, Edit, MenuItem, TabItem.' },
+        depth: { type: 'integer', description: 'How deep to search, 1 to 8. Defaults to 6.' },
+        max: { type: 'integer', description: 'Maximum elements visited, 1 to 400. Defaults to 400.' },
+      },
+    },
+    output: { schema: FIND_OUTPUT, render: (_args, value) => [{ type: 'text', text: renderFind(value) }] },
+    timeoutMs: 60_000,
+    isConcurrencySafe: () => true,
+    presentCall: (args) => ({ card: 'generic', title: args?.name ? `Find "${args.name}"` : 'Find a control', kind: 'read' }),
+    async execute(args, exec) {
+      assertWindows('desktop observation')
+      if (!args?.name && !args?.automation_id && !args?.type) {
+        throw new Error('give name, automation_id or type to identify the control')
+      }
+      const instance = await desktopHelper().start()
+      const payload = elementQuery(args)
+      const reply = await instance.call('uiaFind', payload, { timeoutMs: 30_000 })
+      if (reply.found) return { found: true, node: reply.node }
+      const tree = await instance.call('uia', { ...payload, depth: Math.min(payload.depth, 4), max: 120 }, { timeoutMs: 30_000 })
+      const candidates = tree.nodes.filter(isInteractiveNode).slice(0, 8)
+      return { found: false, candidates }
+    },
+  })
+
+  register({
+    name: 'desktop_click_element',
+    description: 'Activate a control by name, automation id or type — invoke, toggle, select or expand, whichever it supports — so no coordinate is needed. Falls back to a click at the control rectangle only for controls that expose no action.',
+    parameters: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        title: { type: 'string', description: 'Window title substring. Ignored when hwnd or a point is given.' },
+        hwnd: { type: 'string', description: 'Exact window handle from desktop_window.' },
+        x: { type: 'integer', description: 'Screen x of a point; pair it with y to search only that element subtree.' },
+        y: { type: 'integer', description: 'Screen y; pair it with x.' },
+        name: { type: 'string', description: 'Visible label, matched case-insensitively as a substring.' },
+        automation_id: { type: 'string', description: 'Exact automation id, when the control exposes one.' },
+        type: { type: 'string', description: 'Control type such as Button, Edit, MenuItem, TabItem.' },
+        depth: { type: 'integer', description: 'How deep to search, 1 to 8. Defaults to 6.' },
+        max: { type: 'integer', description: 'Maximum elements visited, 1 to 400. Defaults to 400.' },
+      },
+    },
+    output: { schema: ELEMENT_ACTION_OUTPUT, render: (args, value) => [{ type: 'text', text: renderElementAction('clicked', value) }] },
+    timeoutMs: 60_000,
+    presentCall: (args) => ({ card: 'generic', title: args?.name ? `Click "${args.name}"` : 'Click a control', kind: 'other' }),
+    async execute(args, exec) {
+      assertWindows('desktop input')
+      assertControlEnabled()
+      assertNotStopped()
+      throttle()
+      if (!args?.name && !args?.automation_id && !args?.type) {
+        throw new Error('give name, automation_id or type to identify the control')
+      }
+      const instance = await desktopHelper().start()
+      const reply = await instance.call('uiaInvoke', elementQuery(args), { timeoutMs: 30_000 })
+      return { how: reply.how, node: reply.node, pointer: reply.pointer, foreground: reply.foreground }
+    },
+  })
+
+  register({
+    name: 'desktop_set_text',
+    description: 'Put text into a field identified by name, automation id or type: value pattern where the control supports it, typing where it does not.',
+    parameters: {
+      type: 'object',
+      additionalProperties: false,
+      required: ['text'],
+      properties: {
+        title: { type: 'string', description: 'Window title substring. Ignored when hwnd or a point is given.' },
+        hwnd: { type: 'string', description: 'Exact window handle from desktop_window.' },
+        x: { type: 'integer', description: 'Screen x of a point; pair it with y to search only that element subtree.' },
+        y: { type: 'integer', description: 'Screen y; pair it with x.' },
+        name: { type: 'string', description: 'Visible label, matched case-insensitively as a substring.' },
+        automation_id: { type: 'string', description: 'Exact automation id, when the control exposes one.' },
+        type: { type: 'string', description: 'Control type such as Edit or Document.' },
+        text: { type: 'string', description: 'Text to put in the field; replaces its current contents.' },
+        depth: { type: 'integer', description: 'How deep to search, 1 to 8. Defaults to 6.' },
+        max: { type: 'integer', description: 'Maximum elements visited, 1 to 400. Defaults to 400.' },
+      },
+    },
+    output: { schema: ELEMENT_ACTION_OUTPUT, render: (args, value) => [{ type: 'text', text: renderElementAction('filled', value) }] },
+    timeoutMs: 60_000,
+    presentCall: (args) => ({ card: 'generic', title: 'Fill a field', kind: 'other' }),
+    async execute(args, exec) {
+      assertWindows('desktop input')
+      assertControlEnabled()
+      assertNotStopped()
+      throttle()
+      if (typeof args?.text !== 'string' || args.text.length === 0) throw new Error('text must not be empty')
+      const instance = await desktopHelper().start()
+      const reply = await instance.call('uiaSetValue', { ...elementQuery(args), text: args.text }, { timeoutMs: 30_000 })
+      return { how: reply.how, node: reply.node, text: reply.text, pointer: reply.pointer, foreground: reply.foreground }
     },
   })
 }

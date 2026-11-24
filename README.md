@@ -27,6 +27,9 @@
 | `desktop_live` | 立刻就看一下（走常驻通道，约 0.2 秒）；可等画面真的变了再返回 |
 | `desktop_wait` | 等窗口出现，或等画面稳定下来（点完不再靠猜） |
 | `desktop_ui_tree` | 读出窗口里的控件（名字/类型/位置），点按钮不用靠猜坐标 |
+- `desktop_find`：按名字/automation id/类型找控件，给出它能执行的动作（Invoke/Value/Toggle/Select/Expand）和当前值
+- `desktop_click_element`：按控件身份点击（自动选 Invoke/Toggle/Select/Expand），没有动作的控件才退回矩形点击
+- `desktop_set_text`：按控件身份填字（有 ValuePattern 就直接设值，没有就聚焦后输入）
 
 所有工具都返回"操作之后"的指针位置和前台窗口，所以每一步都能确认落点对不对。
 
@@ -186,7 +189,7 @@ sequenceDiagram
 
 要点：
 
-1. `index.js` 以**原始 JSON-Schema** 注册十二个工具，不 import Harness 包——外部 bundle 解析不到宿主依赖，所以参数校验也自己写在 `execute` 里。
+1. `index.js` 以**原始 JSON-Schema** 注册十五个工具，不 import Harness 包——外部 bundle 解析不到宿主依赖，所以参数校验也自己写在 `execute` 里。
 2. 每次调用启动一个短命的 `powershell.exe -NoProfile -NonInteractive`：`capture.ps1` 负责截图与几何，`control.ps1` 负责 `SendInput` 与窗口操作，`Add-Type` 现场编译一小段 P/Invoke 助手。
 3. 结果写进临时 JSON 文件再由 Node 读取，**不解析本地化控制台文本**，中英文系统的差异不影响解析。
 4. 截图与几何来自同一套 DPI 感知的坐标，所以"截图里看到的点"和"点击落到的点"是同一个坐标系。
@@ -195,7 +198,7 @@ sequenceDiagram
 ## 目录结构
 
 ```text
-index.js              十二个工具的定义与执行编排
+index.js              十五个工具的定义与执行编排
 lib/scene.js          纯函数：坐标换算、观察信封（可单测，无 I/O）
 lib/control.js        纯函数：组合键解析、操作信封（可单测，无 I/O）
 lib/powershell.js     唯一的 PowerShell 进程封装（临时 JSON 协议）

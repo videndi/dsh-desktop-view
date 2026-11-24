@@ -1,8 +1,8 @@
 {
   "name": "dsh-desktop-view",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "private": true,
-  "description": "Live desktop observation and input for the DeepSeek Harness agent: an always-on helper for fast screen capture, pointer and window state, move/click/drag/scroll/type/keys/window control, UI Automation element lookup and screen-stability waits on Windows.",
+  "description": "Live desktop observation and input for the DeepSeek Harness agent: a resident helper for fast capture, pointer and window state, move/click/drag/scroll/type/keys/window control, and UI Automation element lookup and activation by name instead of coordinates, on Windows.",
   "type": "module",
   "main": "index.js",
   "exports": {

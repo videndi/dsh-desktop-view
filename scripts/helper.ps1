@@ -440,6 +440,22 @@ function Get-UiaTree([IntPtr]$handle, [int]$depth, [int]$max, $point) {
     $current = $element.Current
     $rect = $current.BoundingRectangle
     if (-not $current.IsOffscreen -or $level -eq 0) {
+      $patterns = @()
+      $value = ''
+      $toggle = ''
+      $pattern = $null
+      if ($element.TryGetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern, [ref]$pattern)) { $patterns += 'Invoke' }
+      if ($element.TryGetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern, [ref]$pattern)) {
+        $patterns += 'Value'
+        try { $value = [string]$pattern.Current.Value } catch { }
+      }
+      if ($element.TryGetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern, [ref]$pattern)) {
+        $patterns += 'Toggle'
+        try { $toggle = ([string]$pattern.Current.ToggleState).ToLower() } catch { }
+      }
+      if ($element.TryGetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern, [ref]$pattern)) { $patterns += 'Select' }
+      if ($element.TryGetCurrentPattern([System.Windows.Automation.ExpandCollapsePattern]::Pattern, [ref]$pattern)) { $patterns += 'Expand' }
+      if ($element.TryGetCurrentPattern([System.Windows.Automation.ScrollPattern]::Pattern, [ref]$pattern)) { $patterns += 'Scroll' }
       [void]$all.Add([ordered]@{
         name         = [string]$current.Name
         type         = ([string]$current.ControlType.ProgrammaticName -replace '^ControlType\.', '')
@@ -450,8 +466,12 @@ function Get-UiaTree([IntPtr]$handle, [int]$depth, [int]$max, $point) {
         width        = [int][Math]::Round($rect.Width)
         height       = [int][Math]::Round($rect.Height)
         enabled      = [bool]$current.IsEnabled
+        focusable    = [bool]$current.IsKeyboardFocusable
         offscreen    = [bool]$current.IsOffscreen
         depth        = $level
+        patterns     = $patterns
+        value        = $value
+        toggle       = $toggle
       })
     }
     if ($level -ge $walkDepth) { return }
@@ -465,6 +485,161 @@ function Get-UiaTree([IntPtr]$handle, [int]$depth, [int]$max, $point) {
 
   Add-Node $root 0
   return $all
+}
+
+# --- element actions -------------------------------------------------------
+
+function Resolve-Handle($request) {
+  if ($request.hwnd) {
+    $clean = ([string]$request.hwnd).Trim()
+    if ($clean.StartsWith('0x') -or $clean.StartsWith('0X')) { $clean = $clean.Substring(2) }
+    $handle = [IntPtr]([Convert]::ToInt64($clean, 16))
+    if (-not [Hv]::WindowExists($handle)) { throw "no window with handle $($request.hwnd)" }
+    return $handle
+  }
+  if ($request.title) {
+    $needle = ([string]$request.title).ToLower()
+    $hits = @([Hv]::Windows() | Where-Object { $_.Title.ToLower().Contains($needle) })
+    if ($hits.Count -eq 0) { throw "no visible window title contains '$($request.title)'" }
+    return $hits[0].Handle
+  }
+  return [IntPtr]::Zero
+}
+
+function Resolve-Root([IntPtr]$handle, $point) {
+  if ($null -ne $point) {
+    $p = New-Object System.Windows.Point($point[0], $point[1])
+    return [System.Windows.Automation.AutomationElement]::FromPoint($p)
+  }
+  if ($handle -ne [IntPtr]::Zero) { return [System.Windows.Automation.AutomationElement]::FromHandle($handle) }
+  return [System.Windows.Automation.AutomationElement]::FocusedElement
+}
+
+function Get-ElementSummary($element) {
+  $current = $element.Current
+  $rect = $current.BoundingRectangle
+  $patterns = @()
+  $value = ''
+  $toggle = ''
+  $pattern = $null
+  if ($element.TryGetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern, [ref]$pattern)) { $patterns += 'Invoke' }
+  if ($element.TryGetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern, [ref]$pattern)) {
+    $patterns += 'Value'
+    try { $value = [string]$pattern.Current.Value } catch { }
+  }
+  if ($element.TryGetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern, [ref]$pattern)) {
+    $patterns += 'Toggle'
+    try { $toggle = ([string]$pattern.Current.ToggleState).ToLower() } catch { }
+  }
+  if ($element.TryGetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern, [ref]$pattern)) { $patterns += 'Select' }
+  if ($element.TryGetCurrentPattern([System.Windows.Automation.ExpandCollapsePattern]::Pattern, [ref]$pattern)) { $patterns += 'Expand' }
+  if ($element.TryGetCurrentPattern([System.Windows.Automation.ScrollPattern]::Pattern, [ref]$pattern)) { $patterns += 'Scroll' }
+  return [ordered]@{
+    name         = [string]$current.Name
+    type         = ([string]$current.ControlType.ProgrammaticName -replace '^ControlType\.', '')
+    automationId = [string]$current.AutomationId
+    className    = [string]$current.ClassName
+    x            = [int][Math]::Round($rect.X)
+    y            = [int][Math]::Round($rect.Y)
+    width        = [int][Math]::Round($rect.Width)
+    height       = [int][Math]::Round($rect.Height)
+    enabled      = [bool]$current.IsEnabled
+    focusable    = [bool]$current.IsKeyboardFocusable
+    offscreen    = [bool]$current.IsOffscreen
+    patterns     = $patterns
+    value        = $value
+    toggle       = $toggle
+  }
+}
+
+function Find-Element($root, [string]$name, [string]$automationId, [string]$type, [int]$depth, [int]$max) {
+  if (-not ($name -or $automationId -or $type)) {
+    throw 'give name, automationId or type to identify the element'
+  }
+  $queue = New-Object 'System.Collections.Generic.Queue[object]'
+  $queue.Enqueue(@($root, 0))
+  $walker = [System.Windows.Automation.TreeWalker]::ControlViewWalker
+  $seen = 0
+  while ($queue.Count -gt 0 -and $seen -lt $max) {
+    $item = $queue.Dequeue()
+    $element = $item[0]
+    $level = [int]$item[1]
+    $seen++
+    $current = $element.Current
+    $match = $true
+    if ($name -and -not ([string]$current.Name).ToLower().Contains($name.ToLower())) { $match = $false }
+    if ($match -and $automationId -and ([string]$current.AutomationId) -ne $automationId) { $match = $false }
+    if ($match -and $type) {
+      $kind = ([string]$current.ControlType.ProgrammaticName -replace '^ControlType\.', '')
+      if ($kind.ToLower() -ne $type.ToLower()) { $match = $false }
+    }
+    if ($match) { return $element }
+    if ($level -ge $depth) { continue }
+    $child = $walker.GetFirstChild($element)
+    while ($null -ne $child) {
+      $queue.Enqueue(@($child, $level + 1))
+      $child = $walker.GetNextSibling($child)
+    }
+  }
+  return $null
+}
+
+function Invoke-Element($element) {
+  $pattern = $null
+  if ($element.TryGetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern, [ref]$pattern)) {
+    $pattern.Invoke()
+    return 'invoke'
+  }
+  if ($element.TryGetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern, [ref]$pattern)) {
+    $pattern.Toggle()
+    return 'toggle'
+  }
+  if ($element.TryGetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern, [ref]$pattern)) {
+    $pattern.Select()
+    return 'select'
+  }
+  if ($element.TryGetCurrentPattern([System.Windows.Automation.ExpandCollapsePattern]::Pattern, [ref]$pattern)) {
+    $pattern.Expand()
+    return 'expand'
+  }
+  $rect = $element.Current.BoundingRectangle
+  if ($rect.Width -le 0 -or $rect.Height -le 0) { throw 'this element exposes no action and has no clickable rectangle' }
+  $x = [int]($rect.X + $rect.Width / 2)
+  $y = [int]($rect.Y + $rect.Height / 2)
+  [Hv]::MoveTo($x, $y) | Out-Null
+  Start-Sleep -Milliseconds 25
+  [Hv]::Button('left', $true)
+  Start-Sleep -Milliseconds 15
+  [Hv]::Button('left', $false)
+  return 'click'
+}
+
+function Set-ElementValue($element, [string]$text) {
+  $pattern = $null
+  if ($element.TryGetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern, [ref]$pattern)) {
+    $pattern.SetValue($text)
+    return 'value'
+  }
+  # Legacy edit controls expose no ValuePattern; click them to focus, then type.
+  $rect = $element.Current.BoundingRectangle
+  if ($rect.Width -gt 0 -and $rect.Height -gt 0) {
+    $x = [int]($rect.X + $rect.Width / 2)
+    $y = [int]($rect.Y + $rect.Height / 2)
+    [Hv]::MoveTo($x, $y) | Out-Null
+    Start-Sleep -Milliseconds 30
+    [Hv]::Button('left', $true)
+    Start-Sleep -Milliseconds 15
+    [Hv]::Button('left', $false)
+    Start-Sleep -Milliseconds 80
+  } else {
+    try { $element.SetFocus() } catch { throw 'this element exposes no ValuePattern and cannot be focused' }
+    Start-Sleep -Milliseconds 60
+  }
+  [Hv]::KeyDown(0x11, $false); [Hv]::KeyDown(0x41, $false)
+  [Hv]::KeyUp(0x41, $false); [Hv]::KeyUp(0x11, $false)
+  Start-Sleep -Milliseconds 40
+  foreach ($ch in $text.ToCharArray()) { [Hv]::TypeChar($ch) }
+  return 'typed'
 }
 
 # --- main loop -------------------------------------------------------------
@@ -693,6 +868,56 @@ while ($true) {
         $max = if ($null -ne $request.max) { [int]$request.max } else { 120 }
         $nodes = Get-UiaTree $handle $depth $max $point
         Write-Line ([ordered]@{ id = $id; ok = $true; nodes = $nodes; count = $nodes.Count })
+      }
+      'uiaFind' {
+        $handle = Resolve-Handle $request
+        $point = $null
+        if ($null -ne $request.x) { $point = @([int]$request.x, [int]$request.y) }
+        $root = Resolve-Root $handle $point
+        $depth = if ($null -ne $request.depth) { [int]$request.depth } else { 6 }
+        $limit = if ($null -ne $request.max) { [int]$request.max } else { 400 }
+        $element = Find-Element $root ([string]$request.name) ([string]$request.automationId) ([string]$request.type) $depth $limit
+        if ($null -eq $element) {
+          Write-Line ([ordered]@{ id = $id; ok = $true; found = $false })
+        } else {
+          Write-Line ([ordered]@{ id = $id; ok = $true; found = $true; node = (Get-ElementSummary $element) })
+        }
+      }
+      'uiaInvoke' {
+        if (Stop-Requested) { throw 'emergency stop is on' }
+        $handle = Resolve-Handle $request
+        $point = $null
+        if ($null -ne $request.x) { $point = @([int]$request.x, [int]$request.y) }
+        $root = Resolve-Root $handle $point
+        $depth = if ($null -ne $request.depth) { [int]$request.depth } else { 6 }
+        $limit = if ($null -ne $request.max) { [int]$request.max } else { 400 }
+        $element = Find-Element $root ([string]$request.name) ([string]$request.automationId) ([string]$request.type) $depth $limit
+        if ($null -eq $element) { throw "no element matched name='$($request.name)' automationId='$($request.automationId)' type='$($request.type)'" }
+        $summary = Get-ElementSummary $element
+        $how = Invoke-Element $element
+        Start-Sleep -Milliseconds 120
+        Write-Line ([ordered]@{
+          id = $id; ok = $true; how = $how; node = $summary
+          pointer = (Get-Pointer); foreground = (Get-WindowRef ([Hv]::GetForegroundWindow()))
+        })
+      }
+      'uiaSetValue' {
+        if (Stop-Requested) { throw 'emergency stop is on' }
+        $handle = Resolve-Handle $request
+        $point = $null
+        if ($null -ne $request.x) { $point = @([int]$request.x, [int]$request.y) }
+        $root = Resolve-Root $handle $point
+        $depth = if ($null -ne $request.depth) { [int]$request.depth } else { 6 }
+        $limit = if ($null -ne $request.max) { [int]$request.max } else { 400 }
+        $element = Find-Element $root ([string]$request.name) ([string]$request.automationId) ([string]$request.type) $depth $limit
+        if ($null -eq $element) { throw "no element matched name='$($request.name)' automationId='$($request.automationId)' type='$($request.type)'" }
+        $summary = Get-ElementSummary $element
+        $how = Set-ElementValue $element ([string]$request.text)
+        Start-Sleep -Milliseconds 60
+        Write-Line ([ordered]@{
+          id = $id; ok = $true; how = $how; node = $summary; text = [string]$request.text
+          pointer = (Get-Pointer); foreground = (Get-WindowRef ([Hv]::GetForegroundWindow()))
+        })
       }
       'quit' {
         Write-Line ([ordered]@{ id = $id; ok = $true })

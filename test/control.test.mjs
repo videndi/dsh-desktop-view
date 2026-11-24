@@ -8,6 +8,8 @@ import {
   renderWindowOp,
   renderUiTree,
   renderWait,
+  renderFind,
+  renderElementAction,
 } from '../lib/control.js'
 
 const foreground = {
@@ -156,17 +158,36 @@ test('renderWindowOp reports outcome, subject and closure', () => {
   assert.match(pending, /close requested; a dialog may be waiting/)
 })
 
-test('renderUiTree prints type, name, id and rectangle', () => {
+test('renderUiTree prints type, name, id, rectangle and actions', () => {
   const text = renderUiTree({
     count: 2,
     nodes: [
-      { name: '', type: 'Pane', automationId: '', className: 'View', x: 10, y: 20, width: 300, height: 200, enabled: true, offscreen: false, depth: 0 },
-      { name: '发送', type: 'Button', automationId: 'send', className: 'Button', x: 40, y: 60, width: 80, height: 30, enabled: false, offscreen: false, depth: 2 },
+      { name: '', type: 'Pane', automationId: '', className: 'View', x: 10, y: 20, width: 300, height: 200, enabled: true, focusable: false, offscreen: false, depth: 0, patterns: [] },
+      { name: '发送', type: 'Button', automationId: 'send', className: 'Button', x: 40, y: 60, width: 80, height: 30, enabled: false, focusable: true, offscreen: false, depth: 2, patterns: ['Invoke'] },
     ],
   })
   assert.match(text, /<ui-tree count="2">/)
-  assert.match(text, /Pane "\(Pane\)" @ 300x200 at \(10, 20\)/)
-  assert.match(text, /    Button "发送" id=send @ 80x30 at \(40, 60\) — disabled/)
+  assert.match(text, /Pane "View" @ 10,20 300x200/)
+  assert.match(text, /Button "发送" #send @ 40,60 80x30 \{Invoke\} disabled/)
+})
+
+test('renderFind shows a match, or the shortlist when nothing matched', () => {
+  const node = { name: '取消', type: 'Button', automationId: '2', className: 'Button', x: 432, y: 1734, width: 175, height: 54, enabled: true, patterns: [] }
+  assert.match(renderFind({ found: true, node }), /<find found="true">match: Button "取消" #2 @ 432,1734 175x54<\/find>/)
+  const miss = renderFind({ found: false, candidates: [node] })
+  assert.match(miss, /no exact match; these interactive controls are here:/)
+  assert.match(miss, /candidate: Button "取消"/)
+})
+
+test('renderElementAction reports how the control was activated', () => {
+  const text = renderElementAction('clicked', {
+    how: 'invoke',
+    node: { name: '确定', type: 'Button', automationId: '1', className: 'Button', x: 243, y: 1734, width: 175, height: 54, enabled: true, patterns: ['Invoke'] },
+    pointer: { x: 330, y: 1761 },
+    foreground: { hwnd: '0x1', title: '运行', className: '#32770', processId: 1, processName: 'explorer' },
+  })
+  assert.match(text, /clicked invoke · Button "确定" #1 @ 243,1734 175x54 \{Invoke\}/)
+  assert.match(text, /pointer \(330, 1761\)/)
 })
 
 test('renderWait distinguishes a window from a stable screen', () => {

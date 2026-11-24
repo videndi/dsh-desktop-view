@@ -4,6 +4,33 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.1] - 2026-11-24
+
+### Added
+
+- `desktop_find`: locate one control by name, automation id or type, and report
+  what it supports (Invoke / Value / Toggle / Select / Expand / Scroll) plus its
+  current value. On no match it returns a bounded shortlist of the interactive
+  controls that are there, so one call replaces a tree dump plus a guess.
+- `desktop_click_element`: activate a control by identity — invoke, toggle,
+  select or expand — and only fall back to a rectangle click for controls that
+  expose no action. The caller never supplies a coordinate.
+- `desktop_set_text`: fill a field by identity, through ValuePattern where it
+  exists and by focusing and typing where it does not.
+- The UI Automation tree now reports supported patterns, current value and
+  toggle state per control, so what a control *does* is visible before acting.
+
+### Changed
+
+- `desktop_ui_tree` shows interactive controls only by default, walks to depth 3
+  with at most 60 nodes, and truncates long names — a dialog tree dropped from
+  ~700 to ~420 characters.
+- `desktop_live` defaults to 960 px wide and, when the screen is identical to
+  the frame it just returned, answers with state only and no image, which is the
+  single largest saving in a polling loop.
+- Every input tool now passes the STOP check and the 12 actions/second cap.
+- Disposing the plugin disposes the helper process and its live timer.
+
 ## [0.3.0] - 2026-11-24
 
 ### Added
