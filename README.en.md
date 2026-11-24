@@ -30,6 +30,7 @@
 - `desktop_find`: locate a control by name, automation id or type and report the actions it supports plus its current value
 - `desktop_click_element`: activate a control by identity (Invoke/Toggle/Select/Expand), falling back to a rectangle click only when it exposes no action
 - `desktop_set_text`: fill a field by identity — ValuePattern where it exists, focus-and-type where it does not
+- `desktop_click_element` / `desktop_set_text`: when identity fails (not found, stale), `fallback_x`/`fallback_y` retry as a coordinate click, and `how` reports which path ran
 
 Every input tool reports the pointer position and foreground window it left behind, so each step can be checked.
 

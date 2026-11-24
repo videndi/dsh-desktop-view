@@ -199,3 +199,12 @@ test('renderWait distinguishes a window from a stable screen', () => {
   assert.match(renderWait({ waited_ms: 450, reason: 'stable', stable: true, signature: 'abc123' }), /screen stable after 450 ms \(signature abc123\)/)
   assert.match(renderWait({ waited_ms: 10000, reason: 'stable', stable: false }), /screen still changing after 10000 ms/)
 })
+
+test('renderElementAction says when the coordinate fallback was used', () => {
+  const text = renderElementAction('clicked', {
+    how: 'coordinate',
+    fallback: true,
+    pointer: { x: 519, y: 1761 },
+  })
+  assert.match(text, /clicked coordinate · no control matched, used the fallback point/)
+})

@@ -30,6 +30,7 @@
 - `desktop_find`：按名字/automation id/类型找控件，给出它能执行的动作（Invoke/Value/Toggle/Select/Expand）和当前值
 - `desktop_click_element`：按控件身份点击（自动选 Invoke/Toggle/Select/Expand），没有动作的控件才退回矩形点击
 - `desktop_set_text`：按控件身份填字（有 ValuePattern 就直接设值，没有就聚焦后输入）
+- `desktop_click_element` / `desktop_set_text`：按身份失败时（找不到、已失效）可给 `fallback_x`/`fallback_y` 退回坐标点击，结果里 `how` 会写明走的是哪条路
 
 所有工具都返回"操作之后"的指针位置和前台窗口，所以每一步都能确认落点对不对。
 

@@ -12,8 +12,27 @@
 # The process answers exactly one line per request. Anything that would print to
 # the console on its own is redirected, so stdout stays a clean protocol channel.
 param(
-  [string]$StopFile = ''
+  [string]$StopFile = '',
+  [int]$Owner = 0
 )
+
+# Sweep orphans: a helper whose owning host process is gone would otherwise linger
+# until the machine reboots, because a disabled plugin never closes its pipe.
+try {
+  $selfId = $PID
+  Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" -ErrorAction Stop | Where-Object {
+    $_.ProcessId -ne $selfId -and $_.CommandLine -like '*helper.ps1*'
+  } | ForEach-Object {
+    if ($_.CommandLine -match '-Owner\s+(\d+)') {
+      $ownerId = [int]$Matches[1]
+      $ownerGone = $ownerId -gt 0 -and -not (Get-Process -Id $ownerId -ErrorAction SilentlyContinue)
+      $sameOwnerLeftover = $Owner -gt 0 -and $ownerId -eq $Owner
+      if ($ownerGone -or $sameOwnerLeftover) {
+        Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue
+      }
+    }
+  }
+} catch { }
 
 $ErrorActionPreference = 'Stop'
 try {
@@ -891,13 +910,51 @@ while ($true) {
         $root = Resolve-Root $handle $point
         $depth = if ($null -ne $request.depth) { [int]$request.depth } else { 6 }
         $limit = if ($null -ne $request.max) { [int]$request.max } else { 400 }
+        $summary = $null
+        $how = $null
+        $activationError = $null
         $element = Find-Element $root ([string]$request.name) ([string]$request.automationId) ([string]$request.type) $depth $limit
-        if ($null -eq $element) { throw "no element matched name='$($request.name)' automationId='$($request.automationId)' type='$($request.type)'" }
-        $summary = Get-ElementSummary $element
-        $how = Invoke-Element $element
-        Start-Sleep -Milliseconds 120
+        if ($null -ne $element) {
+          $summary = Get-ElementSummary $element
+          try {
+            $how = Invoke-Element $element
+          } catch {
+            # The element can go stale between the walk and the action; re-find once.
+            $activationError = $_.Exception.Message
+            $element = Find-Element $root ([string]$request.name) ([string]$request.automationId) ([string]$request.type) $depth $limit
+            if ($null -ne $element) {
+              try {
+                $summary = Get-ElementSummary $element
+                $how = Invoke-Element $element
+                $activationError = $null
+              } catch {
+                $activationError = $_.Exception.Message
+              }
+            }
+          }
+        }
+        $usedFallback = $false
+        if ($null -eq $how) {
+          if ($null -ne $request.fallbackX -and $null -ne $request.fallbackY) {
+            $fx = [int]$request.fallbackX
+            $fy = [int]$request.fallbackY
+            Assert-Point $fx $fy
+            [Hv]::MoveTo($fx, $fy) | Out-Null
+            Start-Sleep -Milliseconds 25
+            [Hv]::Button('left', $true)
+            Start-Sleep -Milliseconds 15
+            [Hv]::Button('left', $false)
+            $how = 'coordinate'
+            $usedFallback = $true
+          } elseif ($activationError) {
+            throw "could not activate the control: $activationError"
+          } else {
+            throw "no element matched name='$($request.name)' automationId='$($request.automationId)' type='$($request.type)', and no fallback coordinates were given"
+          }
+        }
+        Start-Sleep -Milliseconds 110
         Write-Line ([ordered]@{
-          id = $id; ok = $true; how = $how; node = $summary
+          id = $id; ok = $true; how = $how; fallback = $usedFallback; node = $summary
           pointer = (Get-Pointer); foreground = (Get-WindowRef ([Hv]::GetForegroundWindow()))
         })
       }
@@ -909,13 +966,56 @@ while ($true) {
         $root = Resolve-Root $handle $point
         $depth = if ($null -ne $request.depth) { [int]$request.depth } else { 6 }
         $limit = if ($null -ne $request.max) { [int]$request.max } else { 400 }
+        $text = [string]$request.text
+        $summary = $null
+        $how = $null
+        $activationError = $null
         $element = Find-Element $root ([string]$request.name) ([string]$request.automationId) ([string]$request.type) $depth $limit
-        if ($null -eq $element) { throw "no element matched name='$($request.name)' automationId='$($request.automationId)' type='$($request.type)'" }
-        $summary = Get-ElementSummary $element
-        $how = Set-ElementValue $element ([string]$request.text)
+        if ($null -ne $element) {
+          $summary = Get-ElementSummary $element
+          try {
+            $how = Set-ElementValue $element $text
+          } catch {
+            $activationError = $_.Exception.Message
+            $element = Find-Element $root ([string]$request.name) ([string]$request.automationId) ([string]$request.type) $depth $limit
+            if ($null -ne $element) {
+              try {
+                $summary = Get-ElementSummary $element
+                $how = Set-ElementValue $element $text
+                $activationError = $null
+              } catch {
+                $activationError = $_.Exception.Message
+              }
+            }
+          }
+        }
+        $usedFallback = $false
+        if ($null -eq $how) {
+          if ($null -ne $request.fallbackX -and $null -ne $request.fallbackY) {
+            $fx = [int]$request.fallbackX
+            $fy = [int]$request.fallbackY
+            Assert-Point $fx $fy
+            [Hv]::MoveTo($fx, $fy) | Out-Null
+            Start-Sleep -Milliseconds 30
+            [Hv]::Button('left', $true)
+            Start-Sleep -Milliseconds 15
+            [Hv]::Button('left', $false)
+            Start-Sleep -Milliseconds 80
+            [Hv]::KeyDown(0x11, $false); [Hv]::KeyDown(0x41, $false)
+            [Hv]::KeyUp(0x41, $false); [Hv]::KeyUp(0x11, $false)
+            Start-Sleep -Milliseconds 40
+            foreach ($ch in $text.ToCharArray()) { [Hv]::TypeChar($ch) }
+            $how = 'coordinate'
+            $usedFallback = $true
+          } elseif ($activationError) {
+            throw "could not fill the control: $activationError"
+          } else {
+            throw "no element matched name='$($request.name)' automationId='$($request.automationId)' type='$($request.type)', and no fallback coordinates were given"
+          }
+        }
         Start-Sleep -Milliseconds 60
         Write-Line ([ordered]@{
-          id = $id; ok = $true; how = $how; node = $summary; text = [string]$request.text
+          id = $id; ok = $true; how = $how; fallback = $usedFallback; node = $summary; text = $text
           pointer = (Get-Pointer); foreground = (Get-WindowRef ([Hv]::GetForegroundWindow()))
         })
       }

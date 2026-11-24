@@ -290,9 +290,10 @@ const FIND_OUTPUT = {
 const ELEMENT_ACTION_OUTPUT = {
   type: 'object',
   additionalProperties: false,
-  required: ['how', 'node'],
+  required: ['how'],
   properties: {
     how: { type: 'string' },
+    fallback: { type: 'boolean' },
     node: ELEMENT_SCHEMA,
     text: { type: 'string' },
     pointer: POINT_SCHEMA,
@@ -682,6 +683,10 @@ function elementQuery(args) {
   if (args?.x !== undefined || args?.y !== undefined) {
     payload.x = requireInteger(args?.x, 'x', -100_000, 100_000)
     payload.y = requireInteger(args?.y, 'y', -100_000, 100_000)
+  }
+  if (args?.fallback_x !== undefined || args?.fallback_y !== undefined) {
+    payload.fallbackX = requireInteger(args?.fallback_x, 'fallback_x', -100_000, 100_000)
+    payload.fallbackY = requireInteger(args?.fallback_y, 'fallback_y', -100_000, 100_000)
   }
   if (args?.name) payload.name = String(args.name)
   if (args?.automation_id) payload.automationId = String(args.automation_id)
@@ -1414,6 +1419,8 @@ export function apply(ctx) {
         name: { type: 'string', description: 'Visible label, matched case-insensitively as a substring.' },
         automation_id: { type: 'string', description: 'Exact automation id, when the control exposes one.' },
         type: { type: 'string', description: 'Control type such as Button, Edit, MenuItem, TabItem.' },
+        fallback_x: { type: 'integer', description: 'Screen x to use when the control cannot be found or activated. Omit to fail instead.' },
+        fallback_y: { type: 'integer', description: 'Screen y paired with fallback_x.' },
         depth: { type: 'integer', description: 'How deep to search, 1 to 8. Defaults to 6.' },
         max: { type: 'integer', description: 'Maximum elements visited, 1 to 400. Defaults to 400.' },
       },
@@ -1431,7 +1438,9 @@ export function apply(ctx) {
       }
       const instance = await desktopHelper().start()
       const reply = await instance.call('uiaInvoke', elementQuery(args), { timeoutMs: 30_000 })
-      return { how: reply.how, node: reply.node, pointer: reply.pointer, foreground: reply.foreground }
+      const value = { how: reply.how, fallback: reply.fallback === true, pointer: reply.pointer, foreground: reply.foreground }
+      if (reply.node) value.node = reply.node
+      return value
     },
   })
 
@@ -1451,6 +1460,8 @@ export function apply(ctx) {
         automation_id: { type: 'string', description: 'Exact automation id, when the control exposes one.' },
         type: { type: 'string', description: 'Control type such as Edit or Document.' },
         text: { type: 'string', description: 'Text to put in the field; replaces its current contents.' },
+        fallback_x: { type: 'integer', description: 'Screen x to use when the control cannot be found or activated. Omit to fail instead.' },
+        fallback_y: { type: 'integer', description: 'Screen y paired with fallback_x.' },
         depth: { type: 'integer', description: 'How deep to search, 1 to 8. Defaults to 6.' },
         max: { type: 'integer', description: 'Maximum elements visited, 1 to 400. Defaults to 400.' },
       },
@@ -1466,7 +1477,9 @@ export function apply(ctx) {
       if (typeof args?.text !== 'string' || args.text.length === 0) throw new Error('text must not be empty')
       const instance = await desktopHelper().start()
       const reply = await instance.call('uiaSetValue', { ...elementQuery(args), text: args.text }, { timeoutMs: 30_000 })
-      return { how: reply.how, node: reply.node, text: reply.text, pointer: reply.pointer, foreground: reply.foreground }
+      const value = { how: reply.how, fallback: reply.fallback === true, text: reply.text, pointer: reply.pointer, foreground: reply.foreground }
+      if (reply.node) value.node = reply.node
+      return value
     },
   })
 }
