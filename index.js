@@ -427,7 +427,7 @@ let liveTimer = null
 let liveFrame = null
 let liveBusy = false
 let liveLastUse = 0
-let lastReturnedSignature = null
+let lastReturnedFingerprint = null
 const actionTimestamps = []
 
 function desktopHelper() {
@@ -753,7 +753,7 @@ export function apply(ctx) {
       if (liveTimer) { clearInterval(liveTimer); liveTimer = null }
       if (helperInstance) { helperInstance.dispose(); helperInstance = null }
       liveFrame = null
-      lastReturnedSignature = null
+      lastReturnedFingerprint = null
     })
   }
 
@@ -1234,7 +1234,10 @@ export function apply(ctx) {
       // Unchanged screen: answer with state only, no pixels. That is the single
       // biggest token saving in a loop, and the frame adds nothing when the
       // picture is byte-identical to the one just returned.
-      if (args?.only_if_changed !== false && liveFrame && liveFrame.signature === lastReturnedSignature) {
+      const currentPrint = decodeFingerprint(liveFrame?.fingerprint)
+      const unchanged = lastReturnedFingerprint !== null && currentPrint !== null
+        && fingerprintDistance(lastReturnedFingerprint, currentPrint) < STABLE_THRESHOLD
+      if (args?.only_if_changed !== false && unchanged) {
         const info = await desktopHelper().call('info')
         const under = await desktopHelper().call('windowAt', { x: info.pointer.x, y: info.pointer.y })
         const region = { x: info.virtualScreen.x, y: info.virtualScreen.y, width: info.virtualScreen.width, height: info.virtualScreen.height, kind: 'virtual-desktop' }
@@ -1260,7 +1263,7 @@ export function apply(ctx) {
         changed,
         waited_ms: Date.now() - started,
       }
-      lastReturnedSignature = liveFrame?.signature ?? null
+      lastReturnedFingerprint = currentPrint
       await attachCapture(ctx, exec, value)
       return value
     },
