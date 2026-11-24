@@ -4,6 +4,30 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-11-24
+
+### Added
+
+- A resident helper process (`scripts/helper.ps1` + `lib/helper.js`) that keeps
+  the P/Invoke layer compiled and answers JSON lines over stdin/stdout, so a
+  frame costs ~0.11-0.19 s and a click ~0.05-0.14 s instead of ~0.7 s.
+- `desktop_live`: look now through the helper; `until: "change"` waits until the
+  picture really changes, which is how an action gets confirmed.
+- `desktop_wait`: wait for a window to appear, or for the screen to settle.
+  Stability compares 32x18 grayscale fingerprints by distance, so animated
+  wallpapers and desktop pets no longer read as "never stable".
+- `desktop_ui_tree`: UI Automation walk of a window or a point, returning names,
+  control types, automation ids and rectangles.
+- Live preview: `~/.dsh/desktop-view/live/index.html` shows the frames the agent
+  sees, refreshed every 300 ms.
+- Safety: at most 12 actions per second, and a `STOP` file in the data directory
+  makes the next input refuse until it is removed.
+
+### Changed
+
+- `desktop_snapshot` and `desktop_cursor` use the resident helper first and fall
+  back to the one-shot script when the helper cannot start.
+
 ## [0.2.0] - 2026-11-12
 
 ### Added

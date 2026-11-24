@@ -28,6 +28,17 @@ closing a window, and no network access. Input runs through a short-lived
 Windows PowerShell process with a fixed, generated script; the plugin passes it
 only numbers, key codes, text, and window identifiers.
 
+## Rate limits and stop file
+
+Input is capped at 12 actions per second. A file named `STOP` in
+`~/.dsh/desktop-view/` makes the helper refuse the next input command until the
+file is deleted; it is checked by the resident helper itself, so it also stops a
+loop that is already running.
+
+The resident helper keeps one PowerShell process alive for the session. It only
+ever executes the fixed command set implemented in `scripts/helper.ps1`; the
+host sends JSON lines with coordinates, key codes, text and window identifiers.
+
 ## Kill switch
 
 Setting `DSH_DESKTOP_CONTROL=off` in the environment that launches Harness makes

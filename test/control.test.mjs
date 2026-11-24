@@ -6,6 +6,8 @@ import {
   renderActionResult,
   renderWindowList,
   renderWindowOp,
+  renderUiTree,
+  renderWait,
 } from '../lib/control.js'
 
 const foreground = {
@@ -152,4 +154,27 @@ test('renderWindowOp reports outcome, subject and closure', () => {
 
   const pending = renderWindowOp({ action: 'close', window: foreground, focused: false, closed: false, foreground })
   assert.match(pending, /close requested; a dialog may be waiting/)
+})
+
+test('renderUiTree prints type, name, id and rectangle', () => {
+  const text = renderUiTree({
+    count: 2,
+    nodes: [
+      { name: '', type: 'Pane', automationId: '', className: 'View', x: 10, y: 20, width: 300, height: 200, enabled: true, offscreen: false, depth: 0 },
+      { name: '发送', type: 'Button', automationId: 'send', className: 'Button', x: 40, y: 60, width: 80, height: 30, enabled: false, offscreen: false, depth: 2 },
+    ],
+  })
+  assert.match(text, /<ui-tree count="2">/)
+  assert.match(text, /Pane "\(Pane\)" @ 300x200 at \(10, 20\)/)
+  assert.match(text, /    Button "发送" id=send @ 80x30 at \(40, 60\) — disabled/)
+})
+
+test('renderWait distinguishes a window from a stable screen', () => {
+  assert.match(
+    renderWait({ waited_ms: 800, reason: 'window', found: true, window: { hwnd: '0x1', title: 'Untitled - Notepad', className: 'Notepad', processId: 42, processName: 'notepad' } }),
+    /window appeared after 800 ms — "Untitled - Notepad"/,
+  )
+  assert.match(renderWait({ waited_ms: 1200, reason: 'window', found: false }), /no window with that title appeared within 1200 ms/)
+  assert.match(renderWait({ waited_ms: 450, reason: 'stable', stable: true, signature: 'abc123' }), /screen stable after 450 ms \(signature abc123\)/)
+  assert.match(renderWait({ waited_ms: 10000, reason: 'stable', stable: false }), /screen still changing after 10000 ms/)
 })

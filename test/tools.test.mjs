@@ -39,9 +39,10 @@ const exec = { signal: new AbortController().signal }
 
 const OBSERVE = ['desktop_cursor', 'desktop_snapshot']
 const INPUT = ['desktop_click', 'desktop_drag', 'desktop_key', 'desktop_move', 'desktop_scroll', 'desktop_type', 'desktop_window']
+const LIVE = ['desktop_live', 'desktop_ui_tree', 'desktop_wait']
 
-test('registers the two observation tools and the seven input tools', () => {
-  assert.deepEqual([...tools.keys()].sort(), [...OBSERVE, ...INPUT].sort())
+test('registers the observation, input and live tools', () => {
+  assert.deepEqual([...tools.keys()].sort(), [...OBSERVE, ...INPUT, ...LIVE].sort())
   for (const [name, definition] of tools) {
     assert.match(name, /^[a-z][a-z0-9_]*$/)
     assert.equal(typeof definition.description, 'string')

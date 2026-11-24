@@ -24,6 +24,9 @@
 | `desktop_type` | Type text into the focused control; newline=Enter, tab=Tab, everything else as Unicode, so non-Latin text needs no layout switch |
 | `desktop_key` | Press a key or chord: `enter`, `esc`, `ctrl+c`, `alt+tab`, `win+r`, `ctrl+shift+esc`… |
 | `desktop_window` | List visible windows, or focus, minimize, maximize, restore, or close one |
+| `desktop_live` | Look right now through the always-on helper (~0.2 s); can wait until the picture actually changes |
+| `desktop_wait` | Wait for a window to appear, or for the screen to settle after an action |
+| `desktop_ui_tree` | Read the controls a window exposes (name, type, rectangle) so buttons are found, not guessed |
 
 Every input tool reports the pointer position and foreground window it left behind, so each step can be checked.
 
@@ -50,6 +53,27 @@ An agent can read files and run commands, but it cannot see the thing you are lo
 - **No native dependency**: plain Windows PowerShell 5.1 plus .NET — nothing to compile or install.
 
 ## Video
+## The live loop (v0.3)
+
+Earlier versions started a fresh PowerShell process for every action (~0.7 s), which forced a slow step-by-step rhythm. v0.3 keeps one **resident helper** alive and talks to it in JSON lines over stdin/stdout:
+
+| Step | Before | Now |
+|---|---|---|
+| One frame (`desktop_live`) | ~700 ms | **~110–190 ms** |
+| Window list | ~600 ms | **~50 ms** |
+| Click / type | ~600–900 ms | **~50–140 ms** |
+| UI Automation tree | — | **~110 ms** |
+
+The loop tools:
+
+- `desktop_live` looks now; `until: "change"` with `wait_ms` waits until the picture really changes, which is how a click gets confirmed;
+- `desktop_wait` waits for a window to appear, or for the screen to settle — compared as a 32×18 grayscale fingerprint distance, so an animated wallpaper or a pet does not count as "never stable";
+- `desktop_ui_tree` lists control names and rectangles (native dialogs, Explorer and Office expose them; Electron and web apps expose little, so coordinates remain the fallback).
+
+**Live preview**: after any `desktop_live` call, open `~/.dsh/desktop-view/live/index.html` in a browser to watch the same frames the agent sees (refreshed every 300 ms).
+
+**Two safety valves**: at most 12 actions per second, and a file named `STOP` in `~/.dsh/desktop-view/` makes the next input refuse until it is deleted.
+
 
 38 seconds, four beats: see the screen, act on it, manage windows, install with one command. Click the cover for the full MP4 (3 MB); the clip below is the input section:
 
@@ -162,7 +186,7 @@ sequenceDiagram
     T-->>M: text envelope + image block when capturing
 ```
 
-- `index.js` registers nine tools as **raw JSON-Schema definitions** and validates its own arguments, because an out-of-tree bundle cannot resolve the harness packages by import.
+- `index.js` registers twelve tools as **raw JSON-Schema definitions** and validates its own arguments, because an out-of-tree bundle cannot resolve the harness packages by import.
 - Each call starts one short-lived `powershell.exe -NoProfile -NonInteractive`: `capture.ps1` for the screenshot and geometry, `control.ps1` for `SendInput` and window operations; `Add-Type` compiles a small P/Invoke helper per process.
 - The helper writes a JSON file that Node reads, so **localized console output is never parsed**.
 - Capture and input share one DPI-aware coordinate space, so a point seen in the image is the point that gets clicked.

@@ -10,22 +10,31 @@
  * Tools are registered as raw JSON-Schema definitions and validate their own
  * arguments: an out-of-tree bundle cannot rely on resolving harness packages.
  */
-import { mkdirSync, readFileSync, readdirSync, rmSync, statSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { monitorIndexAt, renderScene } from './lib/scene.js'
-import { parseKeyCombo, renderActionResult, renderWindowList, renderWindowOp } from './lib/control.js'
+import { parseKeyCombo, renderActionResult, renderUiTree, renderWait, renderWindowList, renderWindowOp } from './lib/control.js'
 import { runPowerShellScript } from './lib/powershell.js'
+import { DesktopHelper } from './lib/helper.js'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const CAPTURE_SCRIPT = join(HERE, 'scripts', 'capture.ps1')
 const CONTROL_SCRIPT = join(HERE, 'scripts', 'control.ps1')
-const SNAPSHOT_DIR = join(homedir(), '.dsh', 'desktop-view', 'snapshots')
+const HELPER_SCRIPT = join(HERE, 'scripts', 'helper.ps1')
+const DATA_DIR = join(homedir(), '.dsh', 'desktop-view')
+const SNAPSHOT_DIR = join(DATA_DIR, 'snapshots')
+const LIVE_DIR = join(DATA_DIR, 'live')
+const STOP_FILE = join(DATA_DIR, 'STOP')
 const KEEP_SNAPSHOTS = 40
 const CAPTURE_TIMEOUT_MS = 30_000
 const CONTROL_TIMEOUT_MS = 30_000
 const MAX_TYPE_CHARS = 4000
+const LIVE_INTERVAL_MS = 300
+const LIVE_MAX_WIDTH = 480
+const LIVE_IDLE_MS = 120_000
+const MAX_ACTIONS_PER_SECOND = 12
 
 /* ------------------------------------------------------------------ schemas */
 
@@ -179,6 +188,76 @@ const CURSOR_OUTPUT = {
   },
 }
 
+const LIVE_OUTPUT = {
+  ...SNAPSHOT_OUTPUT,
+  required: [...SNAPSHOT_OUTPUT.required, 'changed'],
+  properties: {
+    ...SNAPSHOT_OUTPUT.properties,
+    changed: { type: 'boolean' },
+    waited_ms: { type: 'integer' },
+  },
+}
+
+const WAIT_OUTPUT = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['waited_ms', 'reason'],
+  properties: {
+    waited_ms: { type: 'integer' },
+    reason: { type: 'string' },
+    found: { type: 'boolean' },
+    stable: { type: 'boolean' },
+    signature: { type: 'string' },
+    window: {
+      type: 'object',
+      additionalProperties: false,
+      required: ['hwnd', 'title', 'className', 'processId', 'processName', 'x', 'y', 'width', 'height', 'minimized', 'foreground'],
+      properties: {
+        hwnd: { type: 'string' },
+        title: { type: 'string' },
+        className: { type: 'string' },
+        processId: { type: 'integer' },
+        processName: { type: 'string' },
+        x: { type: 'integer' },
+        y: { type: 'integer' },
+        width: { type: 'integer' },
+        height: { type: 'integer' },
+        minimized: { type: 'boolean' },
+        foreground: { type: 'boolean' },
+      },
+    },
+  },
+}
+
+const UI_NODE_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['name', 'type', 'automationId', 'className', 'x', 'y', 'width', 'height', 'enabled', 'offscreen', 'depth'],
+  properties: {
+    name: { type: 'string' },
+    type: { type: 'string' },
+    automationId: { type: 'string' },
+    className: { type: 'string' },
+    x: { type: 'integer' },
+    y: { type: 'integer' },
+    width: { type: 'integer' },
+    height: { type: 'integer' },
+    enabled: { type: 'boolean' },
+    offscreen: { type: 'boolean' },
+    depth: { type: 'integer' },
+  },
+}
+
+const UI_TREE_OUTPUT = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['count', 'nodes'],
+  properties: {
+    count: { type: 'integer' },
+    nodes: { type: 'array', items: UI_NODE_SCHEMA },
+  },
+}
+
 const WINDOW_LIST_ITEM = {
   type: 'object',
   additionalProperties: false,
@@ -289,23 +368,242 @@ function pruneSnapshots(dir) {
   } catch { /* pruning is optional */ }
 }
 
-function runCapture(options) {
-  return runPowerShellScript({
-    script: CAPTURE_SCRIPT,
-    args: [
-      '-Mode', options.mode,
-      '-OutPng', options.pngPath ?? '',
-      '-MonitorIndex', String(options.monitor ?? 0),
-      '-MaxWidth', String(options.maxWidth ?? 0),
-      '-MarkCursor', options.markCursor === false ? '0' : '1',
-    ],
-    signal: options.signal,
-    timeoutMs: CAPTURE_TIMEOUT_MS,
-  })
+/* -------------------------------------------------- persistent desktop helper */
+
+let helperInstance = null
+let liveTimer = null
+let liveFrame = null
+let liveBusy = false
+let liveLastUse = 0
+const actionTimestamps = []
+
+function desktopHelper() {
+  if (!helperInstance) {
+    helperInstance = new DesktopHelper({
+      script: HELPER_SCRIPT,
+      stopFile: STOP_FILE,
+      onLog: (message) => console.error(`[desktop-view] ${message}`),
+    })
+  }
+  return helperInstance
 }
 
-function runControl(request, signal, timeoutMs = CONTROL_TIMEOUT_MS) {
-  return runPowerShellScript({ script: CONTROL_SCRIPT, request, signal, timeoutMs })
+function delay(ms) {
+  return new Promise((resolve) => { const timer = setTimeout(resolve, ms); timer.unref?.() })
+}
+
+/**
+ * A 32x18 grayscale fingerprint comes back with every grab. Comparing distances
+ * instead of hashes is what lets "stable" survive an animated wallpaper or a
+ * pet that redraws itself several times a second.
+ */
+function decodeFingerprint(base64) {
+  if (typeof base64 !== 'string' || base64.length === 0) return null
+  try { return Buffer.from(base64, 'base64') } catch { return null }
+}
+
+function fingerprintDistance(left, right) {
+  if (!left || !right || left.length !== right.length) return Number.POSITIVE_INFINITY
+  let total = 0
+  for (let index = 0; index < left.length; index += 1) total += Math.abs(left[index] - right[index])
+  return total / left.length
+}
+
+const CHANGE_THRESHOLD = 4
+const STABLE_THRESHOLD = 2.5
+
+function localIso() {
+  const now = new Date()
+  const pad = (value, width = 2) => String(value).padStart(width, '0')
+  const offset = -now.getTimezoneOffset()
+  const sign = offset >= 0 ? '+' : '-'
+  const abs = Math.abs(offset)
+  return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`
+    + `T${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`
+    + `${sign}${pad(Math.floor(abs / 60))}:${pad(abs % 60)}`
+}
+
+/** Refuse bursts: a runaway loop must not machine-gun the desktop. */
+function throttle() {
+  const now = Date.now()
+  while (actionTimestamps.length > 0 && now - actionTimestamps[0] > 1000) actionTimestamps.shift()
+  if (actionTimestamps.length >= MAX_ACTIONS_PER_SECOND) {
+    throw new Error(`rate limit reached: ${MAX_ACTIONS_PER_SECOND} desktop actions per second; pause before continuing`)
+  }
+  actionTimestamps.push(now)
+}
+
+function assertNotStopped() {
+  if (existsSync(STOP_FILE)) {
+    throw new Error(`emergency stop is on: delete ${STOP_FILE} to allow desktop control again`)
+  }
+}
+
+/* ----------------------------------------------------------------- live view */
+
+function previewPagePath() {
+  return join(LIVE_DIR, 'index.html')
+}
+
+function writePreviewPage() {
+  const html = `<!doctype html>
+<html lang="zh"><meta charset="utf-8"><title>desktop-view · live</title>
+<style>
+  :root { color-scheme: dark; }
+  body { margin:0; background:#070d18; color:#93a7c4; font:14px/1.5 system-ui, "Microsoft YaHei", sans-serif; }
+  header { padding:10px 16px; display:flex; gap:12px; align-items:baseline; border-bottom:1px solid #1b2740; }
+  strong { color:#e8eefc; font-weight:600; }
+  img { display:block; width:100%; height:auto; background:#0b1220; }
+  footer { padding:8px 16px; font-family: Consolas, monospace; font-size:12px; color:#5f7396; }
+</style>
+<header><strong>桌面视图 · 实时预览</strong><span>每 300 ms 刷新</span></header>
+<img id="frame" alt="desktop" src="latest.jpg">
+<footer id="meta"></footer>
+<script>
+  const img = document.getElementById('frame')
+  const meta = document.getElementById('meta')
+  let misses = 0
+  setInterval(() => {
+    img.src = 'latest.jpg?t=' + Date.now()
+    meta.textContent = new Date().toLocaleTimeString() + (misses ? ' · 等待助手' : '')
+  }, 300)
+  img.onerror = () => { misses += 1 }
+  img.onload = () => { misses = 0 }
+</script>
+</html>`
+  try {
+    mkdirSync(LIVE_DIR, { recursive: true })
+    writeFileSync(previewPagePath(), html, 'utf8')
+  } catch { /* preview is a convenience */ }
+}
+
+async function liveTick() {
+  if (liveBusy) return
+  if (liveTimer && Date.now() - liveLastUse > LIVE_IDLE_MS) {
+    clearInterval(liveTimer)
+    liveTimer = null
+    return
+  }
+  liveBusy = true
+  try {
+    const frame = await desktopHelper().grab({
+      path: join(LIVE_DIR, 'latest.jpg'),
+      maxWidth: LIVE_MAX_WIDTH,
+      quality: 65,
+    })
+    liveFrame = { ...frame, at: Date.now() }
+  } catch { /* keep the previous frame */ }
+  finally { liveBusy = false }
+}
+
+async function ensureLive() {
+  liveLastUse = Date.now()
+  if (liveTimer) return
+  writePreviewPage()
+  liveTimer = setInterval(() => { liveTick().catch(() => {}) }, LIVE_INTERVAL_MS)
+  liveTimer.unref?.()
+  await liveTick()
+}
+
+/* --------------------------------------------------------------- capture --- */
+
+async function captureScene(options) {
+  const instance = await desktopHelper().start()
+  if (options.mode === 'cursor') {
+    const info = await instance.call('info')
+    const under = await instance.call('windowAt', { x: info.pointer.x, y: info.pointer.y })
+    return {
+      capturedAt: localIso(),
+      region: {
+        x: info.virtualScreen.x, y: info.virtualScreen.y,
+        width: info.virtualScreen.width, height: info.virtualScreen.height,
+        kind: 'virtual-desktop',
+      },
+      virtualScreen: info.virtualScreen,
+      monitors: info.monitors,
+      dpiScale: Math.round((info.dpi / 96) * 1000) / 1000,
+      cursor: {
+        screenX: info.pointer.x, screenY: info.pointer.y,
+        imageX: info.pointer.x, imageY: info.pointer.y, onImage: true,
+      },
+      foregroundWindow: info.foreground,
+      windowUnderCursor: under.window,
+    }
+  }
+
+  const frame = await instance.grab({
+    path: options.pngPath,
+    maxWidth: options.maxWidth ?? 0,
+    markCursor: options.markCursor !== false,
+    quality: 88,
+    ...(options.monitor ? { monitor: options.monitor } : {}),
+  })
+  const info = await instance.call('info')
+  const under = await instance.call('windowAt', { x: frame.cursor.x, y: frame.cursor.y })
+  const scale = frame.sourceWidth > 0 ? Math.round((frame.width / frame.sourceWidth) * 10000) / 10000 : 1
+  const onImage = frame.cursor.x >= frame.region.x && frame.cursor.x < frame.region.x + frame.region.width
+    && frame.cursor.y >= frame.region.y && frame.cursor.y < frame.region.y + frame.region.height
+  return {
+    capturedAt: localIso(),
+    region: {
+      x: frame.region.x, y: frame.region.y, width: frame.region.width, height: frame.region.height,
+      kind: options.monitor ? `monitor ${options.monitor}` : 'virtual-desktop',
+    },
+    virtualScreen: info.virtualScreen,
+    monitors: info.monitors,
+    dpiScale: Math.round((info.dpi / 96) * 1000) / 1000,
+    cursor: {
+      screenX: frame.cursor.x,
+      screenY: frame.cursor.y,
+      imageX: Math.round((frame.cursor.x - frame.region.x) * scale),
+      imageY: Math.round((frame.cursor.y - frame.region.y) * scale),
+      onImage,
+    },
+    foregroundWindow: frame.foreground,
+    windowUnderCursor: under.window,
+    image: {
+      path: options.pngPath,
+      width: frame.width,
+      height: frame.height,
+      sourceWidth: frame.sourceWidth,
+      sourceHeight: frame.sourceHeight,
+      scale,
+      bytes: frame.bytes,
+    },
+  }
+}
+
+async function runCapture(options) {
+  try {
+    return await captureScene(options)
+  } catch (error) {
+    console.error(`[desktop-view] persistent helper capture failed (${error.message}); falling back to the one-shot helper`)
+    return runPowerShellScript({
+      script: CAPTURE_SCRIPT,
+      args: [
+        '-Mode', options.mode,
+        '-OutPng', options.pngPath ?? '',
+        '-MonitorIndex', String(options.monitor ?? 0),
+        '-MaxWidth', String(options.maxWidth ?? 0),
+        '-MarkCursor', options.markCursor === false ? '0' : '1',
+      ],
+      signal: options.signal,
+      timeoutMs: CAPTURE_TIMEOUT_MS,
+    })
+  }
+}
+
+async function runControl(request, signal, timeoutMs = CONTROL_TIMEOUT_MS) {
+  try {
+    const instance = await desktopHelper().start()
+    const reply = await instance.call(request.action, { ...request }, { timeoutMs })
+    if (request.action === 'type') reply.chars = reply.typed
+    return reply
+  } catch (error) {
+    if (signal?.aborted) throw error
+    console.error(`[desktop-view] persistent helper input failed (${error.message}); falling back to the one-shot helper`)
+    return runPowerShellScript({ script: CONTROL_SCRIPT, request, signal, timeoutMs })
+  }
 }
 
 /** Whether the route that will receive this result accepts image content. */
@@ -777,6 +1075,157 @@ export function apply(ctx) {
         pointer: result.pointer,
         foreground: result.foreground,
       }
+    },
+  })
+
+  /* ------------------------------------------------------------- live view */
+
+  register({
+    name: 'desktop_live',
+    description: 'Look at the screen now, served by the always-on helper (about 0.2 s instead of the 0.7 s a cold capture costs), so it can be called in a loop while working. With until "change" and wait_ms it waits until the picture actually changes before answering — that is how a click gets confirmed.',
+    parameters: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        max_width: { type: 'integer', description: 'Downscale to at most this width. Omit for 1280; 0 keeps native resolution.' },
+        mark_cursor: { type: 'boolean', description: 'Draw a ring at the pointer. Defaults to true.' },
+        until: { type: 'string', enum: ['change'], description: 'Wait until the screen changes before returning. Needs wait_ms.' },
+        wait_ms: { type: 'integer', description: 'Upper bound for the wait, 0 to 30000 ms. Defaults to 0.' },
+      },
+    },
+    output: {
+      schema: LIVE_OUTPUT,
+      render: (_args, value) => {
+        const content = [{ type: 'text', text: renderScene(value, value.attachment !== undefined) }]
+        if (value.attachment) content.push({ type: 'image', attachment: value.attachment })
+        return content
+      },
+      presentationMeta: (_args, value) => ({ path: value.image.path }),
+    },
+    timeoutMs: 60_000,
+    isConcurrencySafe: () => true,
+    presentCall: (args) => ({ card: 'generic', title: args?.until === 'change' ? 'Desktop live (waiting for change)' : 'Desktop live', kind: 'read' }),
+    async execute(args, exec) {
+      assertWindows('desktop observation')
+      mkdirSync(SNAPSHOT_DIR, { recursive: true })
+      const maxWidth = optionalInteger(args?.max_width, 'max_width', 1280, 0, 3840)
+      const waitMs = optionalInteger(args?.wait_ms, 'wait_ms', 0, 0, 30_000)
+      await ensureLive()
+      const before = decodeFingerprint(liveFrame?.fingerprint)
+      const started = Date.now()
+      let changed = false
+      if (args?.until === 'change' && waitMs > 0) {
+        while (Date.now() - started < waitMs) {
+          await delay(100)
+          const now = decodeFingerprint(liveFrame?.fingerprint)
+          if (now && fingerprintDistance(before, now) > CHANGE_THRESHOLD) { changed = true; break }
+        }
+      } else if (waitMs > 0) {
+        await delay(waitMs)
+      }
+      pruneSnapshots(SNAPSHOT_DIR)
+      const pngPath = join(SNAPSHOT_DIR, `live-${timestampSlug()}.png`)
+      const scene = await runCapture({ mode: 'snapshot', pngPath, maxWidth, markCursor: args?.mark_cursor !== false })
+      const value = {
+        ...scene,
+        cursor: { ...scene.cursor, monitorIndex: monitorIndexAt(scene.monitors, scene.cursor.screenX, scene.cursor.screenY) },
+        changed,
+        waited_ms: Date.now() - started,
+      }
+      await attachCapture(ctx, exec, value)
+      return value
+    },
+  })
+
+  register({
+    name: 'desktop_wait',
+    description: 'Wait for something to be ready before acting. Give title to wait until a window whose title contains it exists, or stable_ms to wait until the screen stops changing (for example after a click). Returns what happened and how long it took, so the next step starts from a settled screen instead of a guess.',
+    parameters: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        title: { type: 'string', description: 'Window title substring, case-insensitive. When set, waits for such a window instead of for stability.' },
+        stable_ms: { type: 'integer', description: 'How long the screen must stay unchanged, 0 to 30000 ms. Defaults to 400 when no title is given.' },
+        timeout_ms: { type: 'integer', description: 'Give up after this long, 200 to 120000 ms. Defaults to 10000.' },
+      },
+    },
+    output: { schema: WAIT_OUTPUT, render: (_args, value) => [{ type: 'text', text: renderWait(value) }] },
+    timeoutMs: 130_000,
+    presentCall: (args) => ({ card: 'generic', title: args?.title ? `Wait for window "${args.title}"` : 'Wait for a stable screen', kind: 'other' }),
+    async execute(args, exec) {
+      assertWindows('desktop observation')
+      const title = typeof args?.title === 'string' && args.title.trim().length > 0 ? args.title.trim() : undefined
+      const timeoutMs = optionalInteger(args?.timeout_ms, 'timeout_ms', 10_000, 200, 120_000)
+      const stableMs = optionalInteger(args?.stable_ms, 'stable_ms', title ? 0 : 400, 0, 30_000)
+      const started = Date.now()
+      const instance = await desktopHelper().start()
+
+      if (title) {
+        while (Date.now() - started < timeoutMs) {
+          const reply = await instance.call('windows', { filter: title, limit: 5 })
+          if (reply.windows.length > 0) {
+            return { waited_ms: Date.now() - started, reason: 'window', found: true, window: reply.windows[0] }
+          }
+          await delay(150)
+        }
+        return { waited_ms: Date.now() - started, reason: 'window', found: false }
+      }
+
+      let last = null
+      let since = Date.now()
+      while (Date.now() - started < timeoutMs) {
+        const frame = await instance.grab({ path: join(LIVE_DIR, 'wait.jpg'), maxWidth: 320, quality: 60 })
+        const print = decodeFingerprint(frame.fingerprint)
+        if (!last || fingerprintDistance(last, print) > STABLE_THRESHOLD) {
+          last = print
+          since = Date.now()
+        } else if (Date.now() - since >= stableMs) {
+          return { waited_ms: Date.now() - started, reason: 'stable', stable: true, signature: frame.signature }
+        }
+        await delay(120)
+      }
+      return { waited_ms: Date.now() - started, reason: 'stable', stable: false, signature: last ? String(liveFrame?.signature ?? '') : '' }
+    },
+  })
+
+  register({
+    name: 'desktop_ui_tree',
+    description: 'List the controls Windows exposes for a window, or for the element at a point: name, control type, automation id and rectangle. Use it to find a button precisely before clicking instead of guessing coordinates from the picture, and to read what a dialog is actually asking.',
+    parameters: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        title: { type: 'string', description: 'Window title substring. Ignored when hwnd or a point is given.' },
+        hwnd: { type: 'string', description: 'Exact window handle from desktop_window, as a hex string.' },
+        x: { type: 'integer', description: 'Screen x of a point; pair it with y to inspect only that element subtree.' },
+        y: { type: 'integer', description: 'Screen y; pair it with x.' },
+        depth: { type: 'integer', description: 'How deep to walk, 1 to 8. Defaults to 4.' },
+        max: { type: 'integer', description: 'Maximum nodes to return, 1 to 400. Defaults to 120.' },
+      },
+    },
+    output: { schema: UI_TREE_OUTPUT, render: (_args, value) => [{ type: 'text', text: renderUiTree(value) }] },
+    timeoutMs: 60_000,
+    isConcurrencySafe: () => true,
+    presentCall: (args) => ({ card: 'generic', title: args?.title ? `UI tree: ${args.title}` : 'UI tree', kind: 'read' }),
+    async execute(args, exec) {
+      assertWindows('desktop observation')
+      const hasPoint = args?.x !== undefined || args?.y !== undefined
+      if (hasPoint && (args?.x === undefined || args?.y === undefined)) {
+        throw new Error('give both x and y, or neither')
+      }
+      const payload = {
+        depth: optionalInteger(args?.depth, 'depth', 4, 1, 8),
+        max: optionalInteger(args?.max, 'max', 120, 1, 400),
+      }
+      if (args?.hwnd) payload.hwnd = String(args.hwnd)
+      else if (args?.title) payload.title = String(args.title)
+      if (hasPoint) {
+        payload.x = requireInteger(args.x, 'x', -100_000, 100_000)
+        payload.y = requireInteger(args.y, 'y', -100_000, 100_000)
+      }
+      const instance = await desktopHelper().start()
+      const reply = await instance.call('uia', payload, { timeoutMs: 30_000 })
+      return { count: reply.count, nodes: reply.nodes }
     },
   })
 }

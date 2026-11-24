@@ -24,6 +24,9 @@
 | `desktop_type` | 往当前焦点输入文本；换行=回车、Tab=Tab，其余字符按 Unicode 输入，中文/日文/emoji 无需切输入法 |
 | `desktop_key` | 按一个键或组合键：`enter`、`esc`、`ctrl+c`、`alt+tab`、`win+r`、`ctrl+shift+esc`… |
 | `desktop_window` | 列出可见窗口，或对某个窗口聚焦/最小化/最大化/还原/关闭 |
+| `desktop_live` | 立刻就看一下（走常驻通道，约 0.2 秒）；可等画面真的变了再返回 |
+| `desktop_wait` | 等窗口出现，或等画面稳定下来（点完不再靠猜） |
+| `desktop_ui_tree` | 读出窗口里的控件（名字/类型/位置），点按钮不用靠猜坐标 |
 
 所有工具都返回"操作之后"的指针位置和前台窗口，所以每一步都能确认落点对不对。
 
@@ -50,6 +53,27 @@
 - **零原生依赖**：纯 Windows PowerShell 5.1 + .NET，不用编译、不用装模块。
 
 ## 视频
+## 实时闭环（v0.3）
+
+前两版每次动作都要起一个 PowerShell 进程（0.7 秒），所以只能"一步一步来"。v0.3 改成一个**常驻助手进程**，命令走 stdin/stdout 的 JSON 行：
+
+| 操作 | 之前 | 现在 |
+|---|---|---|
+| 取一帧（`desktop_live`） | ~700 ms | **~110–190 ms** |
+| 窗口列表 | ~600 ms | **~50 ms** |
+| 点击 / 输入 | ~600–900 ms | **~50–140 ms** |
+| UI 自动化树 | 无 | **~110 ms** |
+
+配套的闭环工具：
+
+- `desktop_live`：看一眼；`until: "change"` + `wait_ms` 会等画面真的变了才返回（点完确认用）；
+- `desktop_wait`：等某个窗口出现，或等画面稳定（用 32×18 灰度指纹的距离判断，动态壁纸/桌宠不会让它永远"不稳定"）；
+- `desktop_ui_tree`：列出控件名与矩形（原生对话框、资源管理器、Office 都能读；Electron/网页应用暴露得少，仍靠坐标）。
+
+**实时预览**：调用过 `desktop_live` 之后，用浏览器打开 `~/.dsh/desktop-view/live/index.html`，就能看到助手正在看的画面（每 300 ms 刷新）。
+
+**两个安全阀**：每秒最多 12 个动作；在 `~/.dsh/desktop-view/` 下建一个名为 `STOP` 的文件，下一次输入前就会拒绝执行（删掉即恢复）。
+
 
 38 秒讲四件事：看见屏幕、动手操作、管理窗口、一条命令安装。点封面看完整版（MP4，3 MB）；下面是其中的操作片段：
 
@@ -162,7 +186,7 @@ sequenceDiagram
 
 要点：
 
-1. `index.js` 以**原始 JSON-Schema** 注册九个工具，不 import Harness 包——外部 bundle 解析不到宿主依赖，所以参数校验也自己写在 `execute` 里。
+1. `index.js` 以**原始 JSON-Schema** 注册十二个工具，不 import Harness 包——外部 bundle 解析不到宿主依赖，所以参数校验也自己写在 `execute` 里。
 2. 每次调用启动一个短命的 `powershell.exe -NoProfile -NonInteractive`：`capture.ps1` 负责截图与几何，`control.ps1` 负责 `SendInput` 与窗口操作，`Add-Type` 现场编译一小段 P/Invoke 助手。
 3. 结果写进临时 JSON 文件再由 Node 读取，**不解析本地化控制台文本**，中英文系统的差异不影响解析。
 4. 截图与几何来自同一套 DPI 感知的坐标，所以"截图里看到的点"和"点击落到的点"是同一个坐标系。
@@ -171,7 +195,7 @@ sequenceDiagram
 ## 目录结构
 
 ```text
-index.js              九个工具的定义与执行编排
+index.js              十二个工具的定义与执行编排
 lib/scene.js          纯函数：坐标换算、观察信封（可单测，无 I/O）
 lib/control.js        纯函数：组合键解析、操作信封（可单测，无 I/O）
 lib/powershell.js     唯一的 PowerShell 进程封装（临时 JSON 协议）

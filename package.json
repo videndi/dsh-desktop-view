@@ -1,8 +1,8 @@
 {
   "name": "dsh-desktop-view",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
-  "description": "Desktop observation and input tools for the DeepSeek Harness agent: DPI-aware screen capture, pointer position, monitor layout and window titles, plus move, click, drag, scroll, type, key and window control on Windows.",
+  "description": "Live desktop observation and input for the DeepSeek Harness agent: an always-on helper for fast screen capture, pointer and window state, move/click/drag/scroll/type/keys/window control, UI Automation element lookup and screen-stability waits on Windows.",
   "type": "module",
   "main": "index.js",
   "exports": {
@@ -15,6 +15,7 @@
     "index.js",
     "lib/*.js",
     "scripts/capture.ps1",
+    "scripts/helper.ps1",
     "scripts/control.ps1",
     "cordis.patch.yml",
     "locale/*.json",
